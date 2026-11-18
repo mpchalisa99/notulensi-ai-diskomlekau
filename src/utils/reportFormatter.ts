@@ -104,11 +104,31 @@ export function createCleanSessionReport(): MeetingReportResult {
     pesertaRapat: '',
     tempat: '',
     isiKegiatan:
-      '1. Dasar / Latar Belakang: -\n\n2. Jalannya Rapat / Pokok Pembahasan: -\n\n3. Hasil Rapat : -\n\n4. Kesimpulan: -',
+      '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara atau pindaian kamera sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]',
     executiveSummary: '',
     actionItems: [],
     cleanTranscript: '',
   };
+}
+
+/**
+ * Enforces strict double-newline (`\n\n`) spacing between every numbered point (`1.`, `2.`, `3.`, etc.)
+ * so the report never renders as cramped text blocks on mobile or WhatsApp.
+ */
+export function normalizeNumberedPointsSpacing(rawBody: string): string {
+  if (!rawBody || !rawBody.trim()) {
+    return '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara atau pindaian kamera sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]';
+  }
+
+  let normalized = rawBody
+    .replace(/\r\n/g, '\n')
+    // Ensure any inline or single-newline numbered item ("... \n2. " or "... 2. ") starts after an explicit blank line
+    .replace(/\n+\s*(?=\d+\.\s+)/g, '\n\n')
+    // Collapse 3+ consecutive newlines down to exact double newline (\n\n)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return normalized;
 }
 
 /**
@@ -185,8 +205,8 @@ export function buildUnifiedSessionContext(
 }
 
 /**
- * Renders the exact official Diskomlekau Notulen template dynamically bound to current metadata,
- * isiKegiatan, and attachmentPhotos count.
+ * Renders the exact official Diskomlekau Notulen template with clean paragraph & item spacing (`\n\n`)
+ * for WhatsApp clipboard (`SALIN LAPORAN (WA)`) and Word (`.docx`) export.
  */
 export function buildOfficialReportText(
   metadata: MeetingMetadata,
@@ -201,9 +221,8 @@ export function buildOfficialReportText(
   const tempat = metadata.tempat?.trim() || '-';
   const pimpinanRapat = metadata.pimpinanRapat?.trim() || '-';
   const pesertaRapat = metadata.pesertaRapat?.trim() || '-';
-  const body =
-    isiKegiatan?.trim() ||
-    `1. Dasar / Latar Belakang: -\n\n2. Jalannya Rapat / Pokok Pembahasan: -\n\n3. Hasil Rapat : -\n\n4. Kesimpulan: -`;
+
+  const formattedBody = normalizeNumberedPointsSpacing(isiKegiatan);
 
   const lampiranSuffix =
     attachmentCount > 0
@@ -212,21 +231,21 @@ export function buildOfficialReportText(
 
   return `Selamat ${waktuSalam}
 
-Yth. Kadiskomlekau 
-Ysh. Sesdiskomlekau, 
+Yth. Kadiskomlekau
+Ysh. Sesdiskomlekau,
 Para Kasubdis, Kasatkomlek, para Kabag.
 
 
 Mohon ijin melaporkan kegiatan ${judulKegiatan} yang dilaksanakan pada:
 
-hari /tanggal: ${hariTanggal}
-pukul: ${pukul}
-tempat: ${tempat}
-pimpinan rapat: ${pimpinanRapat}
-peserta rapat : ${pesertaRapat}
+- Hari,tanggal: ${hariTanggal}
+- Pukul: ${pukul}
+- Tempat: ${tempat}
+- Pimpinan rapat: ${pimpinanRapat}
+- Peserta rapat : ${pesertaRapat}
 
 
-${body}
+${formattedBody}
 
 
 Demikian laporan pelaksanaan kegiatan ini kami sampaikan. Terima kasih, selamat ${waktuSalam}. ${lampiranSuffix}`;
