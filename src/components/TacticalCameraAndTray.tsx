@@ -179,7 +179,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
   ).toUpperCase()} - ${(metadata.hariTanggal?.trim() || '-').toUpperCase()}`;
 
   return (
-    <div className="fixed inset-0 z-50 w-screen h-screen bg-black overflow-hidden select-none">
+    <div className="fixed inset-0 z-50 w-screen h-dvh bg-black overflow-hidden select-none">
       <input
         ref={fallbackCameraInputRef}
         type="file"
@@ -208,8 +208,8 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
       {/* Tactical HUD Corner Reticles */}
       <div className="pointer-events-none absolute top-5 left-5 w-8 h-8 border-t-2 border-l-2 border-[#F59E0B]/85 rounded-tl" />
       <div className="pointer-events-none absolute top-5 right-5 w-8 h-8 border-t-2 border-r-2 border-[#F59E0B]/85 rounded-tr" />
-      <div className="pointer-events-none absolute bottom-32 left-5 w-8 h-8 border-b-2 border-l-2 border-[#F59E0B]/85 rounded-bl" />
-      <div className="pointer-events-none absolute bottom-32 right-5 w-8 h-8 border-b-2 border-r-2 border-[#F59E0B]/85 rounded-br" />
+      <div className="pointer-events-none absolute bottom-44 left-5 w-8 h-8 border-b-2 border-l-2 border-[#F59E0B]/85 rounded-bl" />
+      <div className="pointer-events-none absolute bottom-44 right-5 w-8 h-8 border-b-2 border-r-2 border-[#F59E0B]/85 rounded-br" />
 
       {/* Top HUD Status Bar */}
       <div className="absolute top-6 inset-x-6 flex items-center justify-between gap-2 pointer-events-none">
@@ -247,10 +247,10 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
         </div>
       )}
 
-      {/* Bottom Floating Tactical Overlay Controls */}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent pt-8 pb-6 px-5 flex flex-col items-center space-y-3">
-        {/* Subtle Live Watermark Preview Badge at Bottom Edge */}
-        <div className="w-full max-w-lg bg-[#0B1120]/85 backdrop-blur-xs border border-[#F59E0B]/50 rounded-lg px-3 py-1.5 text-center">
+      {/* Bottom Floating Tactical Overlay Controls — Raised higher up so shutter button is never covered */}
+      <div className="absolute inset-x-0 bottom-12 sm:bottom-10 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-6 pb-8 px-5 flex flex-col items-center space-y-3.5">
+        {/* Subtle Live Watermark Preview Badge */}
+        <div className="w-full max-w-lg bg-[#0B1120]/90 backdrop-blur-xs border border-[#F59E0B]/50 rounded-lg px-3 py-1.5 text-center shadow-md">
           <p className="text-[10px] sm:text-xs font-extrabold tracking-wider text-[#F59E0B] uppercase truncate">
             {watermarkBannerText}
           </p>
@@ -259,23 +259,23 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
           </p>
         </div>
 
-        {/* Bottom Control Row: Left TUTUP | Center JEPRET FOTO | Right FRONT/REAR */}
-        <div className="w-full max-w-lg flex items-center justify-between gap-4">
+        {/* Bottom Control Row: Left TUTUP | Center JEPRET FOTO (Elevated) | Right FRONT/REAR */}
+        <div className="w-full max-w-lg flex items-center justify-between gap-4 pb-2">
           {/* Close/Back Button (TUTUP) on the Left */}
           <button
             type="button"
             onClick={onClose}
-            className="min-w-[88px] min-h-[46px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
+            className="min-w-[88px] min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
           >
             <X className="w-4 h-4 text-red-400" />
             <span>TUTUP</span>
           </button>
 
-          {/* Large Tactile Shutter Button (JEPRET FOTO) in the Center */}
+          {/* Large Tactile Shutter Button (JEPRET FOTO) in the Center — Raised with -translate-y-2 */}
           <button
             type="button"
             onClick={handleJepretFoto}
-            className="group relative flex flex-col items-center justify-center px-6 py-3 rounded-2xl bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border-2 border-white/90 text-slate-950 font-extrabold shadow-[0_0_25px_rgba(245,158,11,0.5)] transition-all cursor-pointer"
+            className="group relative -translate-y-2 flex flex-col items-center justify-center px-7 py-3.5 rounded-2xl bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border-2 border-white text-slate-950 font-extrabold shadow-[0_0_30px_rgba(245,158,11,0.65)] transition-all cursor-pointer"
           >
             <div className="flex items-center gap-2">
               <Camera className="w-6 h-6 stroke-[2.4] text-slate-950" />
@@ -289,7 +289,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
           <button
             type="button"
             onClick={handleSwitchCamera}
-            className="min-w-[88px] min-h-[46px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
+            className="min-w-[88px] min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
             title="Ganti Kamera Depan / Belakang"
           >
             <SwitchCamera className="w-4 h-4 text-[#38BDF8]" />
