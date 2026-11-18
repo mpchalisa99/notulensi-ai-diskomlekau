@@ -13,10 +13,15 @@ import {
   WidthType,
 } from 'docx';
 import type { ActionItem, CapturedPhotoItem, MeetingMetadata } from '../types';
+import { burnTacticalBannerWatermark, getImageDimensions } from './tacticalWatermark';
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array | null {
   try {
-    if (!dataUrl.startsWith('data:image/jpeg;base64,') && !dataUrl.startsWith('data:image/png;base64,')) {
+    if (
+      !dataUrl.startsWith('data:image/jpeg;base64,') &&
+      !dataUrl.startsWith('data:image/png;base64,') &&
+      !dataUrl.startsWith('data:image/webp;base64,')
+    ) {
       return null;
     }
     const base64 = dataUrl.split(',')[1];
@@ -32,12 +37,27 @@ function dataUrlToUint8Array(dataUrl: string): Uint8Array | null {
   }
 }
 
+function computeDocxImageDimensions(
+  naturalWidth: number,
+  naturalHeight: number
+): { width: number; height: number } {
+  const maxWidth = 480;
+  const maxHeight = 360;
+  const safeW = Math.max(1, naturalWidth);
+  const safeH = Math.max(1, naturalHeight);
+  const scale = Math.min(maxWidth / safeW, maxHeight / safeH);
+  return {
+    width: Math.max(160, Math.round(safeW * scale)),
+    height: Math.max(120, Math.round(safeH * scale)),
+  };
+}
+
 export async function exportReportToDocx(
   fullReportText: string,
   metadata: MeetingMetadata,
   executiveSummary?: string,
   actionItems?: ActionItem[],
-  capturedPhotos?: CapturedPhotoItem[]
+  attachmentPhotos?: CapturedPhotoItem[]
 ): Promise<void> {
   const lines = fullReportText.split(/\r?\n/);
 
@@ -181,8 +201,8 @@ export async function exportReportToDocx(
     );
   }
 
-  // Embed LAMPIRAN (DOKUMENTASI_KEGIATAN) photos directly into the .docx
-  const lampiranPhotos = (capturedPhotos || []).filter(
+  // Embed ALL photos from attachmentPhotos[] (DOKUMENTASI_KEGIATAN / LAMPIRAN) into the .docx
+  const lampiranPhotos = (attachmentPhotos || []).filter(
     (p) => p.category === 'DOKUMENTASI_KEGIATAN'
   );
 
@@ -193,7 +213,7 @@ export async function exportReportToDocx(
         heading: HeadingLevel.HEADING_3,
         children: [
           new TextRun({
-            text: 'LAMPIRAN DOKUMENTASI KEGIATAN (WATERMARKED)',
+            text: `LAMPIRAN DOKUMENTASI KEGIATAN (${lampiranPhotos.length} FOTO WATERMARKED)`,
             font: 'Arial',
             size: 22,
             bold: true,
@@ -202,19 +222,31 @@ export async function exportReportToDocx(
       })
     );
 
-    lampiranPhotos.forEach((photo, idx) => {
-      const imgBytes = dataUrlToUint8Array(photo.displayDataUrl);
+    for (let idx = 0; idx < lampiranPhotos.length; idx++) {
+      const photo = lampiranPhotos[idx];
+
+      // Ensure every attachment photo has the up-to-date [JUDUL KEGIATAN] - [TANGGAL] watermark
+      const watermarkedDataUrl = await burnTacticalBannerWatermark(
+        photo.cleanSourceDataUrl || photo.displayDataUrl,
+        metadata.judulKegiatan,
+        metadata.hariTanggal
+      );
+
+      const { width: natW, height: natH } = await getImageDimensions(watermarkedDataUrl);
+      const { width: scaledW, height: scaledH } = computeDocxImageDimensions(natW, natH);
+      const imgBytes = dataUrlToUint8Array(watermarkedDataUrl);
+
       if (imgBytes) {
         extraChildren.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { before: 120, after: 80 },
+            spacing: { before: 160, after: 60 },
             children: [
               new ImageRun({
                 data: imgBytes,
                 transformation: {
-                  width: 480,
-                  height: 270,
+                  width: scaledW,
+                  height: scaledH,
                 },
                 type: 'jpg',
               }),
@@ -226,20 +258,21 @@ export async function exportReportToDocx(
       extraChildren.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
-          spacing: { after: 200 },
+          spacing: { after: 220 },
           children: [
             new TextRun({
-              text: `Lampiran Foto ${idx + 1}: ${
+              text: `Dokumentasi ${idx + 1}: ${
                 metadata.judulKegiatan || 'Dokumentasi Kegiatan'
               } — ${metadata.hariTanggal || ''} (${photo.capturedAt})`,
               font: 'Arial',
               size: 18,
+              bold: true,
               italics: true,
             }),
           ],
         })
       );
-    });
+    }
   }
 
   const doc = new Document({

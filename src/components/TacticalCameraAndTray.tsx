@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   ChevronUp,
   ChevronDown,
+  FilePlus2,
 } from 'lucide-react';
 import type {
   CapturedPhotoItem,
@@ -24,7 +25,11 @@ interface FullscreenCameraModalProps {
   onClose: () => void;
   metadata: MeetingMetadata;
   capturedCount: number;
-  onAutonomousPhotoCapture: (rawDataUrls: string[]) => void;
+  attachmentCount: number;
+  onAutonomousPhotoCapture: (
+    rawDataUrls: string[],
+    forcedCategory?: VisionCategory
+  ) => void;
 }
 
 export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
@@ -32,9 +37,13 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
   onClose,
   metadata,
   capturedCount,
+  attachmentCount,
   onAutonomousPhotoCapture,
 }) => {
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [captureTargetMode, setCaptureTargetMode] = useState<'AUTO_AI' | 'LAMPIRAN_DIRECT'>(
+    'AUTO_AI'
+  );
   const [isStartingCamera, setIsStartingCamera] = useState(false);
   const [shutterFlash, setShutterFlash] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -114,6 +123,9 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
   };
 
   const handleJepretFoto = () => {
+    const forcedCat: VisionCategory | undefined =
+      captureTargetMode === 'LAMPIRAN_DIRECT' ? 'DOKUMENTASI_KEGIATAN' : undefined;
+
     const videoEl = videoRef.current;
     if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
       const canvas = document.createElement('canvas');
@@ -131,10 +143,14 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
         setShutterFlash(true);
         setTimeout(() => setShutterFlash(false), 180);
 
-        setLastSnapFeedback('Foto berhasil dijepret & dikirim ke AI Vision Router!');
+        setLastSnapFeedback(
+          forcedCat === 'DOKUMENTASI_KEGIATAN'
+            ? `Foto Dokumentasi #${attachmentCount + 1} disimpan + Watermark!`
+            : `Foto #${capturedCount + 1} dijepret & dikirim ke AI Vision Router!`
+        );
         setTimeout(() => setLastSnapFeedback(null), 2200);
 
-        onAutonomousPhotoCapture([dataUrl]);
+        onAutonomousPhotoCapture([dataUrl], forcedCat);
         return;
       }
     }
@@ -146,6 +162,9 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
   const handleFallbackFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
+
+    const forcedCat: VisionCategory | undefined =
+      captureTargetMode === 'LAMPIRAN_DIRECT' ? 'DOKUMENTASI_KEGIATAN' : undefined;
 
     const promises: Promise<string>[] = [];
     for (let i = 0; i < fileList.length; i++) {
@@ -164,8 +183,11 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
     Promise.all(promises).then((urls) => {
       const valid = urls.filter(Boolean);
       if (valid.length > 0) {
-        onAutonomousPhotoCapture(valid);
-        onClose();
+        onAutonomousPhotoCapture(valid, forcedCat);
+        setLastSnapFeedback(
+          `${valid.length} foto berhasil ditambahkan ke daftar sesi ini!`
+        );
+        setTimeout(() => setLastSnapFeedback(null), 2200);
       }
     });
 
@@ -208,20 +230,40 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
       {/* Tactical HUD Corner Reticles */}
       <div className="pointer-events-none absolute top-5 left-5 w-8 h-8 border-t-2 border-l-2 border-[#F59E0B]/85 rounded-tl" />
       <div className="pointer-events-none absolute top-5 right-5 w-8 h-8 border-t-2 border-r-2 border-[#F59E0B]/85 rounded-tr" />
-      <div className="pointer-events-none absolute bottom-44 left-5 w-8 h-8 border-b-2 border-l-2 border-[#F59E0B]/85 rounded-bl" />
-      <div className="pointer-events-none absolute bottom-44 right-5 w-8 h-8 border-b-2 border-r-2 border-[#F59E0B]/85 rounded-br" />
+      <div className="pointer-events-none absolute bottom-48 left-5 w-8 h-8 border-b-2 border-l-2 border-[#F59E0B]/85 rounded-bl" />
+      <div className="pointer-events-none absolute bottom-48 right-5 w-8 h-8 border-b-2 border-r-2 border-[#F59E0B]/85 rounded-br" />
 
       {/* Top HUD Status Bar */}
-      <div className="absolute top-6 inset-x-6 flex items-center justify-between gap-2 pointer-events-none">
-        <div className="inline-flex items-center gap-2 bg-[#0B1120]/85 backdrop-blur-md border border-slate-700/80 rounded-lg px-3 py-1.5">
+      <div className="absolute top-6 inset-x-6 flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-2 bg-[#0B1120]/85 backdrop-blur-md border border-slate-700/80 rounded-lg px-3 py-1.5 pointer-events-none">
           <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
           <span className="text-[11px] font-mono font-bold text-slate-100 uppercase tracking-wider">
-            AEGIS-BRIEF VISION CAM ({facingMode === 'environment' ? 'REAR' : 'FRONT'})
+            AEGIS-BRIEF CAM ({facingMode === 'environment' ? 'REAR' : 'FRONT'})
           </span>
         </div>
 
-        <div className="bg-[#0B1120]/85 backdrop-blur-md border border-[#38BDF8]/50 rounded-lg px-3 py-1.5 text-[11px] font-mono text-[#38BDF8]">
-          {capturedCount} Foto Sesi Ini
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() =>
+              setCaptureTargetMode((prev) =>
+                prev === 'AUTO_AI' ? 'LAMPIRAN_DIRECT' : 'AUTO_AI'
+              )
+            }
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-bold uppercase border cursor-pointer transition-colors ${
+              captureTargetMode === 'LAMPIRAN_DIRECT'
+                ? 'bg-[#10B981]/90 text-slate-950 border-emerald-300'
+                : 'bg-[#0B1120]/85 text-[#38BDF8] border-[#38BDF8]/50'
+            }`}
+          >
+            {captureTargetMode === 'LAMPIRAN_DIRECT'
+              ? 'MODE: LANGSUNG LAMPIRAN (.DOCX)'
+              : 'MODE: AUTO AI VISION'}
+          </button>
+
+          <div className="bg-[#0B1120]/85 backdrop-blur-md border border-[#10B981]/60 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-emerald-300 pointer-events-none">
+            Lampiran: {attachmentCount} | Total: {capturedCount}
+          </div>
         </div>
       </div>
 
@@ -255,7 +297,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
             {watermarkBannerText}
           </p>
           <p className="text-[9px] font-mono text-slate-300 truncate">
-            AUTO-KLASIFIKASI AI: OCR UNDANGAN &bull; MATERI PAPARAN &bull; LAMPIRAN WATERMARK
+            MULTI-SHOT AKTIF: JEPRET BANYAK FOTO BERURUTAN TANPA MENUTUP KAMERA
           </p>
         </div>
 
@@ -268,7 +310,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
             className="min-w-[88px] min-h-[48px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900/95 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
           >
             <X className="w-4 h-4 text-red-400" />
-            <span>TUTUP</span>
+            <span>SELESAI</span>
           </button>
 
           {/* Large Tactile Shutter Button (JEPRET FOTO) in the Center — Raised with -translate-y-2 */}
@@ -309,6 +351,7 @@ interface CollapsibleDataCaptureTrayProps {
   onRemovePhoto: (id: string) => void;
   onOpenFullscreenCamera: () => void;
   onOpenGalleryPicker: () => void;
+  onOpenDirectLampiranPicker: () => void;
 }
 
 export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProps> = ({
@@ -319,13 +362,17 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
   onRemovePhoto,
   onOpenFullscreenCamera,
   onOpenGalleryPicker,
+  onOpenDirectLampiranPicker,
 }) => {
   // Default: Collapsed state so it never blocks main workspace on mobile screens
   const [isExpanded, setIsExpanded] = useState(false);
 
   const analyzingCount = photos.filter((p) => p.status === 'analyzing').length;
+  const attachmentPhotos = photos.filter(
+    (p) => p.category === 'DOKUMENTASI_KEGIATAN'
+  );
 
-  const getCategoryMeta = (cat: VisionCategory) => {
+  const getCategoryMeta = (cat: VisionCategory, docIndex?: number) => {
     switch (cat) {
       case 'OCR_UNDANGAN':
         return {
@@ -346,8 +393,10 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
       case 'DOKUMENTASI_KEGIATAN':
       default:
         return {
-          badgeLabel: 'LAMPIRAN',
-          shortLabel: 'LAMPIRAN (DOC)',
+          badgeLabel: docIndex ? `DOKUMENTASI ${docIndex}` : 'LAMPIRAN',
+          shortLabel: docIndex
+            ? `DOKUMENTASI ${docIndex} (.DOCX)`
+            : 'LAMPIRAN (.DOCX)',
           badgeClass: 'bg-[#10B981] text-slate-950 border-[#10B981]',
           borderSelected: 'border-[#10B981] shadow-[0_0_10px_rgba(16,185,129,0.35)]',
           icon: <FileCheck2 className="w-2.5 h-2.5" />,
@@ -355,27 +404,29 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
     }
   };
 
+  let runningDocIndex = 0;
+
   return (
     <section className="bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-2 shadow-lg transition-all">
       {/* Compact Folding Bar (Always Visible) */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
         <button
           type="button"
           onClick={() => setIsExpanded((prev) => !prev)}
-          className="flex-1 inline-flex items-center gap-1.5 text-left py-1 px-2 rounded-lg bg-[#0B1120] hover:bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-100 transition-colors cursor-pointer"
+          className="flex-1 min-w-[180px] inline-flex items-center gap-1.5 text-left py-1.5 px-2.5 rounded-lg bg-[#0B1120] hover:bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-100 transition-colors cursor-pointer"
         >
           {isExpanded ? (
             <>
               <ChevronDown className="w-4 h-4 text-[#F59E0B] shrink-0" />
               <span className="truncate">
-                ▼ Lipat / Sembunyikan ({photos.length})
+                ▼ Lipat ({photos.length} Foto • {attachmentPhotos.length} Lampiran Word)
               </span>
             </>
           ) : (
             <>
               <ChevronUp className="w-4 h-4 text-[#38BDF8] shrink-0" />
               <span className="truncate">
-                ▲ Tangkapan Foto &amp; OCR ({photos.length})
+                ▲ Tangkapan Foto ({photos.length}) • Lampiran Word: {attachmentPhotos.length}
               </span>
             </>
           )}
@@ -387,13 +438,13 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
           )}
         </button>
 
-        {/* Quick-Action Buttons: 📷 Kamera & 🖼️ Galeri */}
+        {/* Quick-Action Buttons: 📷 Kamera, 🖼️ Galeri (AI), & ➕ Lampiran Multi-Foto */}
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={onOpenFullscreenCamera}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border border-amber-300/70 text-slate-950 font-extrabold text-xs shadow cursor-pointer"
-            title="Buka Kamera Fullscreen (Ambil Foto)"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border border-amber-300/70 text-slate-950 font-extrabold text-xs shadow cursor-pointer"
+            title="Buka Kamera Fullscreen (Multi-Shot)"
           >
             <Camera className="w-3.5 h-3.5 stroke-[2.3]" />
             <span>Kamera</span>
@@ -401,12 +452,22 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
 
           <button
             type="button"
+            onClick={onOpenDirectLampiranPicker}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 active:scale-95 border border-[#10B981]/70 text-emerald-200 font-bold text-xs shadow cursor-pointer"
+            title="Tambah Banyak Foto Sekaligus Langsung sebagai Lampiran Dokumentasi (.docx) dengan Watermark Otomatis"
+          >
+            <FilePlus2 className="w-3.5 h-3.5 text-[#10B981]" />
+            <span>+Lampiran ({attachmentPhotos.length})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={onOpenGalleryPicker}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1E293B] hover:bg-slate-700 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs shadow cursor-pointer"
-            title="Pilih Foto dari Galeri (Otomatis Klasifikasi OCR / Paparan / Lampiran)"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#1E293B] hover:bg-slate-700 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs shadow cursor-pointer"
+            title="Pilih Banyak Foto dari Galeri (Otomatis Klasifikasi OCR / Paparan / Lampiran)"
           >
             <ImageIcon className="w-3.5 h-3.5 text-[#38BDF8]" />
-            <span>Galeri</span>
+            <span>Galeri AI</span>
           </button>
         </div>
       </div>
@@ -417,98 +478,118 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
           {photos.length === 0 ? (
             <div className="py-4 text-center text-xs text-slate-400 font-mono">
               Belum ada tangkapan foto pada sesi ini. Tekan tombol{' '}
-              <span className="text-[#F59E0B] font-bold">Kamera</span> atau{' '}
-              <span className="text-[#38BDF8] font-bold">Galeri</span> untuk memindai
-              Undangan (OCR), Slide Paparan, atau Lampiran Dokumentasi.
+              <span className="text-[#F59E0B] font-bold">Kamera</span>,{' '}
+              <span className="text-[#10B981] font-bold">+Lampiran</span>, atau{' '}
+              <span className="text-[#38BDF8] font-bold">Galeri AI</span> untuk
+              menambahkan banyak foto dokumentasi sekaligus.
             </div>
           ) : (
-            <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
-              {photos.map((photo) => {
-                const isSelected = selectedPhotoId === photo.id;
-                const isAnalyzing = photo.status === 'analyzing';
-                const meta = getCategoryMeta(photo.category);
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 px-1">
+                <span>
+                  TOTAL: <strong className="text-slate-200">{photos.length} FOTO</strong>
+                </span>
+                <span className="text-emerald-300">
+                  SIAP EKSPOR KE WORD (.DOCX):{' '}
+                  <strong>{attachmentPhotos.length} FOTO LAMPIRAN WATERMARK</strong>
+                </span>
+              </div>
 
-                return (
-                  <div
-                    key={photo.id}
-                    onClick={() => onSelectPhoto(photo.id)}
-                    className="shrink-0 w-36 sm:w-40 flex flex-col items-center cursor-pointer group"
-                  >
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+                {photos.map((photo) => {
+                  const isSelected = selectedPhotoId === photo.id;
+                  const isAnalyzing = photo.status === 'analyzing';
+                  if (photo.category === 'DOKUMENTASI_KEGIATAN') {
+                    runningDocIndex += 1;
+                  }
+                  const docSeq =
+                    photo.category === 'DOKUMENTASI_KEGIATAN'
+                      ? runningDocIndex
+                      : undefined;
+                  const meta = getCategoryMeta(photo.category, docSeq);
+
+                  return (
                     <div
-                      className={`relative w-full aspect-[16/10] rounded-lg overflow-hidden bg-[#0B1120] transition-all border-2 ${
-                        isSelected
-                          ? meta.borderSelected
-                          : 'border-slate-700/80 hover:border-slate-500'
-                      }`}
+                      key={photo.id}
+                      onClick={() => onSelectPhoto(photo.id)}
+                      className="shrink-0 w-36 sm:w-40 flex flex-col items-center cursor-pointer group"
                     >
-                      <img
-                        src={photo.displayDataUrl}
-                        alt={meta.badgeLabel}
-                        className="w-full h-full object-cover"
-                      />
-
-                      {/* Category Badge */}
                       <div
-                        className={`absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-extrabold tracking-wider uppercase shadow ${meta.badgeClass}`}
+                        className={`relative w-full aspect-[16/10] rounded-lg overflow-hidden bg-[#0B1120] transition-all border-2 ${
+                          isSelected
+                            ? meta.borderSelected
+                            : 'border-slate-700/80 hover:border-slate-500'
+                        }`}
                       >
-                        {isAnalyzing ? (
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                        ) : (
-                          meta.icon
-                        )}
-                        <span>{isAnalyzing ? 'AI...' : meta.badgeLabel}</span>
+                        <img
+                          src={photo.displayDataUrl}
+                          alt={meta.badgeLabel}
+                          className="w-full h-full object-cover"
+                        />
+
+                        {/* Category Badge */}
+                        <div
+                          className={`absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-extrabold tracking-wider uppercase shadow ${meta.badgeClass}`}
+                        >
+                          {isAnalyzing ? (
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            meta.icon
+                          )}
+                          <span>{isAnalyzing ? 'AI...' : meta.badgeLabel}</span>
+                        </div>
+
+                        {/* Manual Override & Delete Buttons */}
+                        <div className="absolute top-1 right-1 flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onCycleCategoryOverride(photo.id);
+                            }}
+                            className="bg-slate-950/85 hover:bg-slate-800 text-slate-200 border border-slate-600 rounded p-1 transition-colors cursor-pointer"
+                            title="Ubah Kategori Manual (OCR Undangan / Materi Paparan / Lampiran)"
+                          >
+                            <RefreshCw className="w-2.5 h-2.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemovePhoto(photo.id);
+                            }}
+                            className="bg-slate-950/85 hover:bg-red-900/90 text-slate-300 hover:text-white border border-slate-600 rounded p-1 transition-colors cursor-pointer"
+                            title="Hapus Foto"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+
+                        {/* Micro-Summary Strip */}
+                        <div className="absolute inset-x-0 bottom-0 bg-[#0B1120]/90 border-t border-slate-800 px-1.5 py-0.5">
+                          <p className="text-[8px] font-mono text-slate-300 truncate leading-tight uppercase">
+                            {isAnalyzing
+                              ? 'MEMINDAI...'
+                              : photo.extractedText ||
+                                photo.confidenceReason ||
+                                photo.capturedAt}
+                          </p>
+                        </div>
                       </div>
 
-                      {/* Manual Override & Delete Buttons */}
-                      <div className="absolute top-1 right-1 flex items-center gap-0.5">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCycleCategoryOverride(photo.id);
-                          }}
-                          className="bg-slate-950/85 hover:bg-slate-800 text-slate-200 border border-slate-600 rounded p-1 transition-colors cursor-pointer"
-                          title="Ubah Kategori Manual (OCR Undangan / Materi Paparan / Lampiran)"
-                        >
-                          <RefreshCw className="w-2.5 h-2.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRemovePhoto(photo.id);
-                          }}
-                          className="bg-slate-950/85 hover:bg-red-900/90 text-slate-300 hover:text-white border border-slate-600 rounded p-1 transition-colors cursor-pointer"
-                          title="Hapus Foto"
-                        >
-                          <Trash2 className="w-2.5 h-2.5" />
-                        </button>
-                      </div>
-
-                      {/* Micro-Summary Strip */}
-                      <div className="absolute inset-x-0 bottom-0 bg-[#0B1120]/90 border-t border-slate-800 px-1.5 py-0.5">
-                        <p className="text-[8px] font-mono text-slate-300 truncate leading-tight uppercase">
-                          {isAnalyzing
-                            ? 'MEMINDAI...'
-                            : photo.extractedText ||
-                              photo.confidenceReason ||
-                              photo.capturedAt}
-                        </p>
-                      </div>
+                      <span
+                        className={`mt-1 text-[9px] font-bold tracking-tight text-center leading-tight uppercase ${
+                          isSelected
+                            ? 'text-[#F59E0B]'
+                            : 'text-slate-300 group-hover:text-white'
+                        }`}
+                      >
+                        {meta.shortLabel}
+                      </span>
                     </div>
-
-                    <span
-                      className={`mt-1 text-[9px] font-bold tracking-tight text-center leading-tight uppercase ${
-                        isSelected
-                          ? 'text-[#F59E0B]'
-                          : 'text-slate-300 group-hover:text-white'
-                      }`}
-                    >
-                      {meta.shortLabel}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

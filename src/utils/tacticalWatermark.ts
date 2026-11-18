@@ -1,16 +1,20 @@
 /**
- * Strips all sensitive camera EXIF/GPS metadata by re-encoding the image through an HTML5 Canvas.
+ * Strips all sensitive camera EXIF/GPS metadata by re-encoding the image through an HTML5 Canvas
+ * while strictly preserving the image's natural aspect ratio.
  */
 export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      const canvas = document.createElement('canvas');
+      const naturalW = img.naturalWidth || img.width || 1280;
+      const naturalH = img.naturalHeight || img.height || 720;
       const maxDim = 1280;
-      const scale = Math.min(1, maxDim / Math.max(img.width || 800, img.height || 600));
-      canvas.width = Math.max(640, Math.round((img.width || 800) * scale));
-      canvas.height = Math.max(360, Math.round((img.height || 450) * scale));
+      const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(320, Math.round(naturalW * scale));
+      canvas.height = Math.max(240, Math.round(naturalH * scale));
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -19,10 +23,30 @@ export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise
       }
 
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.86));
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(sourceDataUrl);
     img.src = sourceDataUrl;
+  });
+}
+
+/**
+ * Returns the pixel width and height of a Data URL image so .docx export can preserve exact aspect ratio.
+ */
+export async function getImageDimensions(
+  dataUrl: string
+): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      resolve({
+        width: img.naturalWidth || img.width || 800,
+        height: img.naturalHeight || img.height || 450,
+      });
+    };
+    img.onerror = () => resolve({ width: 800, height: 450 });
+    img.src = dataUrl;
   });
 }
 
@@ -39,11 +63,14 @@ export async function burnTacticalBannerWatermark(
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      const canvas = document.createElement('canvas');
+      const naturalW = img.naturalWidth || img.width || 1280;
+      const naturalH = img.naturalHeight || img.height || 720;
       const maxDim = 1280;
-      const scale = Math.min(1, maxDim / Math.max(img.width || 800, img.height || 600));
-      canvas.width = Math.max(640, Math.round((img.width || 800) * scale));
-      canvas.height = Math.max(360, Math.round((img.height || 450) * scale));
+      const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(320, Math.round(naturalW * scale));
+      canvas.height = Math.max(240, Math.round(naturalH * scale));
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -53,7 +80,7 @@ export async function burnTacticalBannerWatermark(
 
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const stripH = Math.round(canvas.height * 0.13);
+      const stripH = Math.max(44, Math.round(canvas.height * 0.13));
       const stripY = canvas.height - stripH;
 
       // High-contrast dark tactical banner
@@ -76,19 +103,22 @@ export async function burnTacticalBannerWatermark(
 
       // Main high-contrast amber-gold watermark text
       ctx.fillStyle = '#F59E0B';
-      ctx.font = `bold ${Math.max(13, Math.round(canvas.width * 0.022))}px sans-serif`;
-      ctx.fillText(bannerText, 18, stripY + Math.round(stripH * 0.52));
+      const mainFontSize = Math.max(12, Math.round(canvas.width * 0.022));
+      ctx.font = `bold ${mainFontSize}px sans-serif`;
+      ctx.fillText(bannerText, 16, stripY + Math.round(stripH * 0.52), canvas.width - 32);
 
       // Sub-line security stamp
       ctx.fillStyle = '#E2E8F0';
-      ctx.font = `${Math.max(10, Math.round(canvas.width * 0.015))}px monospace`;
+      const subFontSize = Math.max(9, Math.round(canvas.width * 0.015));
+      ctx.font = `${subFontSize}px monospace`;
       ctx.fillText(
         'AEGIS-BRIEF DISKOMLEKAU • EXIF STRIPPED • DOKUMENTASI RESMI TERVERIFIKASI',
-        18,
-        stripY + Math.round(stripH * 0.84)
+        16,
+        stripY + Math.round(stripH * 0.84),
+        canvas.width - 32
       );
 
-      resolve(canvas.toDataURL('image/jpeg', 0.86));
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(cleanSourceDataUrl);
     img.src = cleanSourceDataUrl;

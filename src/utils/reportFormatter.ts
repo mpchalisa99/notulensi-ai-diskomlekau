@@ -105,11 +105,13 @@ export function createCleanSessionReport(): MeetingReportResult {
 }
 
 /**
- * Renders the exact official Diskomlekau Notulen template dynamically bound to current metadata & isiKegiatan.
+ * Renders the exact official Diskomlekau Notulen template dynamically bound to current metadata,
+ * isiKegiatan, and attachmentPhotos count.
  */
 export function buildOfficialReportText(
   metadata: MeetingMetadata,
-  isiKegiatan: string
+  isiKegiatan: string,
+  attachmentCount: number = 0
 ): string {
   const waktuSalam = metadata.waktuSalam || detectWaktuSalam();
   const judulKegiatan =
@@ -122,6 +124,11 @@ export function buildOfficialReportText(
   const body =
     isiKegiatan?.trim() ||
     `1. Dasar / Latar Belakang: -\n\n2. Jalannya Rapat / Pokok Pembahasan: -\n\n3. Hasil Rapat : -\n\n4. Kesimpulan: -`;
+
+  const lampiranSuffix =
+    attachmentCount > 0
+      ? `(Dokumentasi terlampir - ${attachmentCount} foto)`
+      : `(Dokumentasi terlampir)`;
 
   return `Selamat ${waktuSalam}
 
@@ -142,7 +149,7 @@ peserta rapat : ${pesertaRapat}
 ${body}
 
 
-Demikian laporan pelaksanaan kegiatan ini kami sampaikan. Terima kasih, selamat ${waktuSalam}. (Dokumentasi terlampir)`;
+Demikian laporan pelaksanaan kegiatan ini kami sampaikan. Terima kasih, selamat ${waktuSalam}. ${lampiranSuffix}`;
 }
 
 export function blobToBase64(blob: Blob): Promise<string> {

@@ -11,9 +11,15 @@ import {
   Trash2,
   Loader2,
   AlertTriangle,
+  ShieldCheck,
+  Database,
 } from 'lucide-react';
 import type { AudioChunkItem, CaptureMode } from '../types';
 import { formatDurationHMS } from '../utils/reportFormatter';
+import {
+  createSilentLoopWavDataUrl,
+  saveAudioChunkToVault,
+} from '../utils/audioVaultDb';
 
 interface AudioRecorderProps {
   chunks: AudioChunkItem[];
@@ -26,6 +32,8 @@ interface AudioRecorderProps {
   onProcessWithAI: (chunksToProcess?: AudioChunkItem[]) => void;
   isProcessingAI: boolean;
   processingStatusText: string;
+  onRecordingStateChange?: (isRecording: boolean) => void;
+  registerStopRecordingRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
 const CHUNK_DURATION_MS = 10 * 60 * 1000;
@@ -41,6 +49,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onProcessWithAI,
   isProcessingAI,
   processingStatusText,
+  onRecordingStateChange,
+  registerStopRecordingRef,
 }) => {
   const [captureMode, setCaptureMode] = useState<CaptureMode>('dual');
   const [isRecording, setIsRecording] = useState(false);
@@ -51,6 +61,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [screenVideoActive, setScreenVideoActive] = useState(false);
   const [systemAudioActive, setSystemAudioActive] = useState(false);
   const [micAudioActive, setMicAudioActive] = useState(false);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const [bgKeepAliveActive, setBgKeepAliveActive] = useState(false);
+  const [vaultSavedCount, setVaultSavedCount] = useState(0);
   const [recorderWarning, setRecorderWarning] = useState<string | null>(null);
   const [recorderError, setRecorderError] = useState<string | null>(null);
 
@@ -67,6 +80,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const activeStreamsRef = useRef<MediaStream[]>([]);
   const mixedDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
+  // Background Keep-Alive & WakeLock refs
+  const wakeLockSentinelRef = useRef<any>(null);
+  const keepAliveOscillatorRef = useRef<OscillatorNode | null>(null);
+  const keepAliveGainRef = useRef<GainNode | null>(null);
+  const silentAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
+
   const chunkStartElapsedRef = useRef<number>(0);
   const elapsedSecondsRef = useRef<number>(0);
   const chunkCounterRef = useRef<number>(0);
@@ -75,10 +95,166 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const clockIntervalRef = useRef<number | null>(null);
   const capturedFramesRef = useRef<string[]>([]);
   const autoProcessOnStopRef = useRef<boolean>(false);
+  const chunksRef = useRef<AudioChunkItem[]>(chunks);
+
+  useEffect(() => {
+    chunksRef.current = chunks;
+    setVaultSavedCount(chunks.length);
+  }, [chunks]);
 
   useEffect(() => {
     capturedFramesRef.current = screenFrames;
   }, [screenFrames]);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+    onRecordingStateChange?.(isRecording);
+  }, [isRecording, onRecordingStateChange]);
+
+  // 1. Screen Wake Lock API: Acquire when recording starts & re-acquire on visibilitychange
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      const nav = navigator as any;
+      if (nav.wakeLock && typeof nav.wakeLock.request === 'function') {
+        if (wakeLockSentinelRef.current) {
+          try {
+            await wakeLockSentinelRef.current.release();
+          } catch {
+            // ignore
+          }
+        }
+        const sentinel = await nav.wakeLock.request('screen');
+        wakeLockSentinelRef.current = sentinel;
+        setWakeLockActive(true);
+        sentinel.addEventListener?.('release', () => {
+          setWakeLockActive(false);
+        });
+      }
+    } catch {
+      setWakeLockActive(false);
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    try {
+      if (wakeLockSentinelRef.current) {
+        await wakeLockSentinelRef.current.release();
+        wakeLockSentinelRef.current = null;
+      }
+    } catch {
+      // ignore
+    } finally {
+      setWakeLockActive(false);
+    }
+  }, []);
+
+  // 2. MediaSession & Silent Keep-Alive Oscillator + Audio Loop for Background Persistence
+  const startBackgroundKeepAlive = useCallback(
+    async (audioCtx: AudioContext) => {
+      try {
+        // Web Audio API Silent Keep-Alive Oscillator (gain = 0.0001)
+        const osc = audioCtx.createOscillator();
+        const silentGain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 440;
+        silentGain.gain.value = 0.0001;
+        osc.connect(silentGain);
+        silentGain.connect(audioCtx.destination);
+        osc.start();
+        keepAliveOscillatorRef.current = osc;
+        keepAliveGainRef.current = silentGain;
+
+        // HTMLAudioElement Silent WAV Loop to keep mobile OS MediaSession active in background
+        if (!silentAudioElRef.current) {
+          const audioEl = new Audio(createSilentLoopWavDataUrl());
+          audioEl.loop = true;
+          audioEl.volume = 0.01;
+          silentAudioElRef.current = audioEl;
+        }
+        await silentAudioElRef.current.play().catch(() => {});
+
+        // Media Session API Metadata & PlaybackState
+        if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'AEGIS-BRIEF DISKOMLEKAU — Merekam Rapat Aktif',
+            artist: 'DISKOMLEKAU Tactical Audio Engine',
+            album: 'Background Recording Keep-Alive',
+            artwork: [
+              {
+                src: '/icon-192.png?v=2',
+                sizes: '192x192',
+                type: 'image/png',
+              },
+              {
+                src: '/icon-512.png?v=2',
+                sizes: '512x512',
+                type: 'image/png',
+              },
+            ],
+          });
+          navigator.mediaSession.playbackState = 'playing';
+        }
+
+        setBgKeepAliveActive(true);
+      } catch {
+        setBgKeepAliveActive(false);
+      }
+    },
+    []
+  );
+
+  const stopBackgroundKeepAlive = useCallback(() => {
+    try {
+      if (keepAliveOscillatorRef.current) {
+        keepAliveOscillatorRef.current.stop();
+        keepAliveOscillatorRef.current.disconnect();
+        keepAliveOscillatorRef.current = null;
+      }
+      if (keepAliveGainRef.current) {
+        keepAliveGainRef.current.disconnect();
+        keepAliveGainRef.current = null;
+      }
+      if (silentAudioElRef.current) {
+        silentAudioElRef.current.pause();
+        silentAudioElRef.current.currentTime = 0;
+      }
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'none';
+        navigator.mediaSession.metadata = null;
+      }
+    } catch {
+      // ignore
+    } finally {
+      setBgKeepAliveActive(false);
+    }
+  }, []);
+
+  // Re-acquire WakeLock and resume AudioContext on visibilitychange so switching to WhatsApp/PDF never drops recording
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!isRecordingRef.current) return;
+
+      if (document.visibilityState === 'visible') {
+        acquireWakeLock();
+      }
+
+      if (
+        audioContextRef.current &&
+        audioContextRef.current.state === 'suspended'
+      ) {
+        audioContextRef.current.resume().catch(() => {});
+      }
+
+      if (silentAudioElRef.current && silentAudioElRef.current.paused) {
+        silentAudioElRef.current.play().catch(() => {});
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [acquireWakeLock]);
 
   const captureFrameFromDisplayTrack = useCallback((): string | null => {
     const track = displayVideoTrackRef.current;
@@ -214,13 +390,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     };
   }, [isRecording, isPaused]);
 
-  useEffect(() => {
-    return () => {
-      cleanupAudioResources();
-    };
-  }, []);
-
-  const cleanupAudioResources = () => {
+  const cleanupAudioResources = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -245,6 +415,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       stream.getTracks().forEach((track) => track.stop());
     });
     activeStreamsRef.current = [];
+    stopBackgroundKeepAlive();
+    releaseWakeLock();
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(() => {});
     }
@@ -254,7 +426,35 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     setScreenVideoActive(false);
     setSystemAudioActive(false);
     setMicAudioActive(false);
-  };
+  }, [releaseWakeLock, stopBackgroundKeepAlive]);
+
+  useEffect(() => {
+    return () => {
+      cleanupAudioResources();
+    };
+  }, [cleanupAudioResources]);
+
+  // Register imperative force-stop handler for the header EXIT button
+  useEffect(() => {
+    if (!registerStopRecordingRef) return;
+    registerStopRecordingRef.current = async () => {
+      autoProcessOnStopRef.current = false;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        await new Promise<void>((resolve) => {
+          const prevOnStop = recorder.onstop;
+          recorder.onstop = (ev) => {
+            if (prevOnStop) prevOnStop.call(recorder, ev);
+            resolve();
+          };
+          recorder.stop();
+        });
+      }
+      setIsRecording(false);
+      setIsPaused(false);
+      cleanupAudioResources();
+    };
+  }, [registerStopRecordingRef, cleanupAudioResources]);
 
   const getSupportedMimeType = (): string => {
     const candidates = [
@@ -310,12 +510,15 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           status: 'ready',
           screenFrames: [...capturedFramesRef.current],
         };
+
+        // Immediately persist completed chunk to IndexedDB (aegis_audio_vault)
+        saveAudioChunkToVault(newChunk);
         onAddChunk(newChunk);
 
         if (autoProcessOnStopRef.current) {
           autoProcessOnStopRef.current = false;
           setTimeout(() => {
-            onProcessWithAI([...chunks, newChunk]);
+            onProcessWithAI([...chunksRef.current, newChunk]);
           }, 250);
         }
       }
@@ -397,7 +600,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             };
           }
 
-          // Capture initial frame then manage video track cleanly
           const videoTracks = displayStream.getVideoTracks();
           if (videoTracks.length > 0 && displayVideoRef.current) {
             const videoTrack = videoTracks[0];
@@ -462,6 +664,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       setScreenVideoActive(hasDisplayVideo);
       setMicAudioActive(hasMicAudio);
 
+      // Activate Screen Wake Lock + Silent Keep-Alive Oscillator + MediaSession
+      await acquireWakeLock();
+      await startBackgroundKeepAlive(audioCtx);
+
       elapsedSecondsRef.current = 0;
       chunkCounterRef.current = chunks.length;
       setElapsedSeconds(0);
@@ -496,6 +702,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (recorder.state === 'recording') {
       recorder.pause();
       setIsPaused(true);
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused';
+      }
       if (clockIntervalRef.current) {
         window.clearInterval(clockIntervalRef.current);
         clockIntervalRef.current = null;
@@ -503,6 +712,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     } else if (recorder.state === 'paused') {
       recorder.resume();
       setIsPaused(false);
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing';
+      }
       clockIntervalRef.current = window.setInterval(() => {
         elapsedSecondsRef.current += 1;
         setElapsedSeconds(elapsedSecondsRef.current);
@@ -584,6 +796,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             status: 'ready',
             screenFrames: [...capturedFramesRef.current],
           };
+          saveAudioChunkToVault(chunkObj);
           onAddChunk(chunkObj);
           newlyUploaded.push(chunkObj);
           nextIdx += 1;
@@ -601,6 +814,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           status: 'ready',
           screenFrames: [...capturedFramesRef.current],
         };
+        saveAudioChunkToVault(chunkObj);
         onAddChunk(chunkObj);
         newlyUploaded.push(chunkObj);
         nextIdx += 1;
@@ -618,13 +832,31 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     <div className="space-y-1">
       {/* Section Header: ANALYZER & CONTROLS + Dual-Stream Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-1 px-0.5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] font-bold tracking-wider text-slate-300 uppercase">
             ANALYZER &amp; CONTROLS
           </span>
           {isRecording && (
             <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
               {systemAudioActive ? 'SYS+MIC' : micAudioActive ? 'MIC AKTIF' : 'AUDIO'}
+            </span>
+          )}
+          {(wakeLockActive || bgKeepAliveActive) && isRecording && (
+            <span
+              className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-500/15 text-[#38BDF8] border border-[#38BDF8]/40"
+              title="Tetap merekam saat beralih ke aplikasi lain (WhatsApp/PDF) atau layar terkunci"
+            >
+              <ShieldCheck className="w-2.5 h-2.5" />
+              BG KEEP-ALIVE
+            </span>
+          )}
+          {vaultSavedCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40"
+              title="Tersimpan aman di IndexedDB (aegis_audio_vault)"
+            >
+              <Database className="w-2.5 h-2.5" />
+              VAULT ({vaultSavedCount})
             </span>
           )}
         </div>
@@ -705,7 +937,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 : isRecording
                 ? isPaused
                   ? 'PAUSED RECORDING'
-                  : 'LIVE RECORDING'
+                  : 'LIVE RECORDING (BG PERSISTENT)'
                 : 'LIVE RECORDING'}
             </span>
           </div>
@@ -732,7 +964,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             title={
               isRecording
                 ? 'Hentikan & Sintesis Laporan Otomatis'
-                : 'Mulai Rekam Rapat (32kbps Opus • Auto-Chunk 10m)'
+                : 'Mulai Rekam Rapat (WakeLock + Background Keep-Alive + IndexedDB Vault)'
             }
           >
             <span
