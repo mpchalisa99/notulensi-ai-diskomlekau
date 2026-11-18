@@ -1,0 +1,6 @@
+{
+  "name": "Tactical MinuteAI — Diskomlekau Meeting Summarizer",
+  "description": "Intelligent Meeting & Zoom Summarizer untuk pembuatan Laporan Pelaksanaan Kegiatan dan Notulensi Rapat resmi secara otomatis.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
