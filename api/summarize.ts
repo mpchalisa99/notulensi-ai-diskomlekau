@@ -63,17 +63,20 @@ const REPORT_RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_INSTRUCTION = `Anda adalah Sistem AI Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara) yang menyusun Laporan Pelaksanaan Kegiatan / Notulensi Rapat secara OTOMATIS.
-Gunakan HANYA informasi aktual dari rekaman audio dan foto (OCR Undangan / Materi Paparan) pada sesi saat ini. Jangan mengarang judul kegiatan atau nama pejabat dari sesi sebelumnya.
+const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Multi-Modal & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara).
 
-Susun \`isiKegiatan\` / \`isiKegiatanDraft\` tepat dalam 4 poin bernomor (pisahkan antar poin dengan 1 baris kosong):
+ATURAN FUSI LINTAS-MODAL & REKONSILIASI ENTITAS (CROSS-MODAL FUSION RULES):
+1. RULE A — VISUAL SPELLING ANCHOR (ANTI-HALLUCINATION): Gunakan teks hasil pindaian OCR_UNDANGAN dan MATERI_PAPARAN sebagai rujukan ejaan otoritatif untuk nama satuan militer, alutsista/radar, akronim, nama pejabat, pangkat, serta angka/spesifikasi teknis. Koreksi otomatis kesalahan fonetik speech-to-text pada transkrip suara menggunakan istilah resmi dari foto.
+2. RULE B — NARRATIVE & SLIDE SYNTHESIS (TANPA DUPLIKASI BAGIAN): JANGAN memisahkan "Ringkasan Suara" dan "Hasil Scan Foto". Leburkan fakta konkret, angka, dan poin teknis dari MATERI_PAPARAN secara menyatu dan kronologis bersama arahan pimpinan dan diskusi dari rekaman suara ke dalam 4 poin baku \`isiKegiatan\`:
 1. Dasar / Latar Belakang: ...
 
 2. Jalannya Rapat / Pokok Pembahasan: ...
 
 3. Hasil Rapat : ...
 
-4. Kesimpulan: ...`;
+4. Kesimpulan: ...
+3. RULE C — AUTOMATIC LANGUAGE NORMALIZATION: Terjemahkan dan adaptasikan istilah teknis/militer berbahasa Inggris dari suara maupun slide presentasi ke dalam Bahasa Indonesia dinas staf TNI AU yang lugas, formal, dan efektif.
+4. RULE D — SYNCHRONIZED ACTION ITEMS: Silangkan instruksi lisan dari audio dengan tabel/jadwal pada slide MATERI_PAPARAN untuk mengisi Tugas, PIC / Satuan, dan Batas Waktu secara akurat.`;
 
 function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: string } {
   if (dataUrlOrBase64.includes(',')) {
@@ -119,6 +122,8 @@ export default async function handler(req: any, res: any) {
       imageDataUrl,
       overrideCategory,
       paparanKnowledge = [],
+      ocrKnowledge = [],
+      unifiedContext,
       metadata,
       chunkIndex = 0,
       totalChunks = 1,
@@ -131,10 +136,10 @@ export default async function handler(req: any, res: any) {
       'Diskomlekau, Kadiskomlekau, Sesdiskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau';
 
     const candidateModels = [
+      { name: 'gemini-2.5-flash', useLowThinking: false },
       { name: 'gemini-3.1-flash-lite', useLowThinking: false },
       { name: 'gemini-3.8-flash', useLowThinking: false },
       { name: 'gemini-4-hydrogen', useLowThinking: true },
-      { name: 'gemini-2.5-flash', useLowThinking: false },
     ];
 
     const invokeModel = async (contents: any, schema: any) => {
@@ -199,12 +204,28 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(parsed);
     }
 
+    if (mode === 'cross_modal_fusion' && unifiedContext) {
+      const fusionPrompt = `Lakukan SINTESIS LINTAS-MODAL & REKONSILIASI DATA (CROSS-MODAL FUSION) atas seluruh input sesi aktif berikut sesuai RULE A (Visual Spelling Anchor), RULE B (Narrative & Slide Synthesis tanpa duplikasi bagian), RULE C (Automatic Language Normalization ke bahasa dinas TNI AU), dan RULE D (Synchronized Action Items):
+1. DATA STREAM AUDIO: ${JSON.stringify(unifiedContext.audioStreamData || [])}
+2. DATA PINDAIAN UNDANGAN (OCR_UNDANGAN): ${JSON.stringify(unifiedContext.ocrUndanganData || [])}
+3. DATA PINDAIAN SLIDE / MATERI PAPARAN (MATERI_PAPARAN): ${JSON.stringify(unifiedContext.materiPaparanData || [])}
+4. DATA DOKUMENTASI KEGIATAN: ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {})}
+5. METADATA SAAT INI: ${JSON.stringify(unifiedContext.currentMetadata || metadata || {})}
+Glossary: ${glossaryHint}`;
+      const response = await invokeModel(fusionPrompt, REPORT_RESPONSE_SCHEMA);
+      return res.status(200).json(JSON.parse((response.text ?? '{}').trim()));
+    }
+
     if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
       const slideContextStr =
         Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
           ? `\nMateri Slide Paparan Sesi Ini:\n${paparanKnowledge.join('\n')}`
           : '';
-      const prompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan sesi ini menjadi satu Laporan Notulensi utuh:\n\n${JSON.stringify(previousSummaries)}${slideContextStr}`;
+      const ocrContextStr =
+        Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
+          ? `\nData Undangan (OCR_UNDANGAN):\n${ocrKnowledge.join('\n')}`
+          : '';
+      const prompt = `Lakukan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan dan undangan sesi ini menjadi satu Laporan Notulensi utuh:\n\n${JSON.stringify(previousSummaries)}${ocrContextStr}${slideContextStr}`;
       const response = await invokeModel(prompt, REPORT_RESPONSE_SCHEMA);
       return res.status(200).json(JSON.parse((response.text ?? '{}').trim()));
     }
@@ -236,11 +257,15 @@ export default async function handler(req: any, res: any) {
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nIntegrasikan pula poin Materi Paparan sesi ini: ${paparanKnowledge.join(' | ')}`
+        ? `\nIntegrasikan pula poin Materi Paparan sesi ini (Rule A & B): ${paparanKnowledge.join(' | ')}`
+        : '';
+    const ocrContextStr =
+      Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
+        ? `\nGunakan rujukan ejaan Undangan (OCR_UNDANGAN): ${ocrKnowledge.join(' | ')}`
         : '';
 
     parts.push({
-      text: `Ekstrak otomatis judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan (4 poin), executiveSummary, actionItems, dan cleanTranscript HANYA dari suara dan materi rapat sesi ini. Bagian ${chunkIndex + 1}/${totalChunks}. Glossary: ${glossaryHint}${slideContextStr}`,
+      text: `Ekstrak dan lakukan Cross-Modal Fusion (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan 4 poin terpadu, executiveSummary, actionItems, dan cleanTranscript) dari suara dan materi rapat sesi ini. Bagian ${chunkIndex + 1}/${totalChunks}. Glossary: ${glossaryHint}${ocrContextStr}${slideContextStr}`,
     });
 
     const response = await invokeModel({ parts }, REPORT_RESPONSE_SCHEMA);

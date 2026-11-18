@@ -19,6 +19,8 @@ export interface CapturedPhotoItem {
   confidenceReason?: string;
   /** Extracted slide bullet points / OCR text */
   extractedText?: string;
+  /** Draft 4-point report section extracted from slide/document */
+  isiKegiatanDraft?: string;
   extractedMetadata?: Partial<MeetingMetadata>;
   isSample?: boolean;
 }
@@ -77,4 +79,52 @@ export interface AudioChunkItem {
   timestampLabel: string;
   status: 'ready' | 'processing' | 'done' | 'error';
   screenFrames?: string[];
+  /** Stored chronological transcript/translation for cross-modal fusion */
+  transcript?: string;
+  /** Stored chunk-level 4-point summary */
+  isiKegiatanSummary?: string;
+  /** Stored chunk-level action items */
+  extractedActionItems?: ActionItem[];
+}
+
+export interface UnifiedAudioSegmentContext {
+  chunkIndex: number;
+  timestampLabel: string;
+  durationSec: number;
+  transcript: string;
+  isiKegiatanSummary: string;
+  actionItems: ActionItem[];
+}
+
+export interface UnifiedOcrUndanganContext {
+  photoId: string;
+  capturedAt: string;
+  judulKegiatan?: string;
+  hariTanggal?: string;
+  pukul?: string;
+  tempat?: string;
+  pimpinanRapat?: string;
+  pesertaRapat?: string;
+  extractedText?: string;
+}
+
+export interface UnifiedMateriPaparanContext {
+  photoId: string;
+  capturedAt: string;
+  slideTitle?: string;
+  extractedKnowledge: string;
+  isiKegiatanDraft?: string;
+}
+
+export interface UnifiedDokumentasiContext {
+  count: number;
+  captions: string[];
+}
+
+export interface UnifiedSessionContextPayload {
+  audioStreamData: UnifiedAudioSegmentContext[];
+  ocrUndanganData: UnifiedOcrUndanganContext[];
+  materiPaparanData: UnifiedMateriPaparanContext[];
+  dokumentasiKegiatanData: UnifiedDokumentasiContext;
+  currentMetadata: MeetingMetadata;
 }

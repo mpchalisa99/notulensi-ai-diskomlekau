@@ -1,4 +1,11 @@
-import type { MeetingMetadata, MeetingReportResult, WaktuSalam } from '../types';
+import type {
+  AudioChunkItem,
+  CapturedPhotoItem,
+  MeetingMetadata,
+  MeetingReportResult,
+  UnifiedSessionContextPayload,
+  WaktuSalam,
+} from '../types';
 
 const HARI_INDONESIA = [
   'Minggu',
@@ -101,6 +108,79 @@ export function createCleanSessionReport(): MeetingReportResult {
     executiveSummary: '',
     actionItems: [],
     cleanTranscript: '',
+  };
+}
+
+/**
+ * Builds the Unified Multi-Modal Session Context Payload (`buildUnifiedSessionContext`)
+ * combining all active session inputs:
+ * 1. Audio Stream Data (chronological transcripts/translations of all recorded audio chunks)
+ * 2. Scanned Invitation Data (`OCR_UNDANGAN`)
+ * 3. Scanned Slide / Document Data (`MATERI_PAPARAN`)
+ * 4. Field Activity Photos (`DOKUMENTASI_KEGIATAN`)
+ */
+export function buildUnifiedSessionContext(
+  chunks: AudioChunkItem[],
+  capturedPhotos: CapturedPhotoItem[],
+  currentMetadata: MeetingMetadata
+): UnifiedSessionContextPayload {
+  const sortedChunks = [...chunks].sort((a, b) => a.index - b.index);
+
+  const audioStreamData = sortedChunks
+    .filter((c) => Boolean(c.transcript || c.isiKegiatanSummary))
+    .map((c) => ({
+      chunkIndex: c.index + 1,
+      timestampLabel: c.timestampLabel,
+      durationSec: c.durationSec,
+      transcript: c.transcript || '',
+      isiKegiatanSummary: c.isiKegiatanSummary || '',
+      actionItems: c.extractedActionItems || [],
+    }));
+
+  const ocrUndanganData = capturedPhotos
+    .filter((p) => p.category === 'OCR_UNDANGAN' && p.status === 'done')
+    .map((p) => ({
+      photoId: p.id,
+      capturedAt: p.capturedAt,
+      judulKegiatan: p.extractedMetadata?.judulKegiatan,
+      hariTanggal: p.extractedMetadata?.hariTanggal,
+      pukul: p.extractedMetadata?.pukul,
+      tempat: p.extractedMetadata?.tempat,
+      pimpinanRapat: p.extractedMetadata?.pimpinanRapat,
+      pesertaRapat: p.extractedMetadata?.pesertaRapat,
+      extractedText: p.extractedText || '',
+    }));
+
+  const materiPaparanData = capturedPhotos
+    .filter((p) => p.category === 'MATERI_PAPARAN' && p.status === 'done')
+    .map((p) => ({
+      photoId: p.id,
+      capturedAt: p.capturedAt,
+      slideTitle: p.extractedMetadata?.judulKegiatan,
+      extractedKnowledge: p.extractedText || p.confidenceReason || '',
+      isiKegiatanDraft: p.isiKegiatanDraft || '',
+    }));
+
+  const lampiranPhotos = capturedPhotos.filter(
+    (p) => p.category === 'DOKUMENTASI_KEGIATAN'
+  );
+
+  const dokumentasiKegiatanData = {
+    count: lampiranPhotos.length,
+    captions: lampiranPhotos.map(
+      (p, idx) =>
+        `Dokumentasi ${idx + 1}: ${
+          currentMetadata.judulKegiatan || 'Dokumentasi Kegiatan'
+        } — ${currentMetadata.hariTanggal || ''} (${p.capturedAt})`
+    ),
+  };
+
+  return {
+    audioStreamData,
+    ocrUndanganData,
+    materiPaparanData,
+    dokumentasiKegiatanData,
+    currentMetadata,
   };
 }
 

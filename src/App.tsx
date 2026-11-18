@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Send,
   FileText,
@@ -19,6 +19,10 @@ import {
   ShieldAlert,
   PlayCircle,
   Archive,
+  Zap,
+  Lock,
+  Loader2,
+  ListChecks,
 } from 'lucide-react';
 import type {
   AudioChunkItem,
@@ -32,6 +36,7 @@ import type {
 import {
   blobToBase64,
   buildOfficialReportText,
+  buildUnifiedSessionContext,
   createCleanSessionMetadata,
   createCleanSessionReport,
   detectCurrentTimeRange,
@@ -48,6 +53,7 @@ import {
   clearAudioVaultChunks,
   loadAudioChunksFromVault,
   removeAudioChunkFromVault,
+  saveAudioChunkToVault,
   saveSessionDraftToArchive,
   type ArchivedSessionRecord,
 } from './utils/audioVaultDb';
@@ -77,6 +83,8 @@ export default function App() {
     createCleanSessionReport()
   );
   const [customFullText, setCustomFullText] = useState<string | null>(null);
+  const [isManualEditLocked, setIsManualEditLocked] = useState(false);
+
   const [chunks, setChunks] = useState<AudioChunkItem[]>([]);
   const [screenFrames, setScreenFrames] = useState<string[]>([]);
 
@@ -93,6 +101,7 @@ export default function App() {
     useState<ArchivedSessionRecord | null>(null);
 
   const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [isCrossModalSyncing, setIsCrossModalSyncing] = useState(false);
   const [processingStatusText, setProcessingStatusText] = useState('');
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiSuccessBanner, setApiSuccessBanner] = useState<string | null>(null);
@@ -102,8 +111,11 @@ export default function App() {
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const directLampiranInputRef = useRef<HTMLInputElement | null>(null);
   const stopRecordingRef = useRef<(() => Promise<void>) | null>(null);
+
   const metadataRef = useRef<MeetingMetadata>(metadata);
   const capturedPhotosRef = useRef<CapturedPhotoItem[]>(capturedPhotos);
+  const chunksRef = useRef<AudioChunkItem[]>(chunks);
+  const isManualEditLockedRef = useRef<boolean>(isManualEditLocked);
 
   useEffect(() => {
     metadataRef.current = metadata;
@@ -112,6 +124,14 @@ export default function App() {
   useEffect(() => {
     capturedPhotosRef.current = capturedPhotos;
   }, [capturedPhotos]);
+
+  useEffect(() => {
+    chunksRef.current = chunks;
+  }, [chunks]);
+
+  useEffect(() => {
+    isManualEditLockedRef.current = isManualEditLocked;
+  }, [isManualEditLocked]);
 
   // Restore any persisted audio chunks from IndexedDB (`aegis_audio_vault`) if OS recovered from memory pressure
   useEffect(() => {
@@ -126,6 +146,10 @@ export default function App() {
   const attachmentPhotos = capturedPhotos.filter(
     (p) => p.category === 'DOKUMENTASI_KEGIATAN'
   );
+
+  // Count of synchronized audio segments and scanned images
+  const syncedAudioCount = chunks.filter((c) => c.status === 'done').length;
+  const scannedImageCount = capturedPhotos.filter((p) => p.status === 'done').length;
 
   // Live dynamic report text bound strictly to current metadata, report.isiKegiatan, and attachmentPhotos.length
   const autoRenderedReportText = buildOfficialReportText(
@@ -157,7 +181,6 @@ export default function App() {
     window.history.pushState({ aegisSessionGuard: true }, '', window.location.href);
 
     const handlePopState = () => {
-      // Re-push history state to block accidental back-swipe navigation
       window.history.pushState({ aegisSessionGuard: true }, '', window.location.href);
       setApiSuccessBanner(
         'Sesi Rapat Terkunci agar rekaman tidak terputus. Tekan tombol merah EXIT di kanan atas jika ingin mengakhiri sesi.'
@@ -206,7 +229,6 @@ export default function App() {
         watermarkedMap[id] = url;
       }
 
-      // Functional update ensures newly added photos are never overwritten
       setCapturedPhotos((prev) =>
         prev.map((photo) =>
           photo.category === 'DOKUMENTASI_KEGIATAN' && watermarkedMap[photo.id]
@@ -226,7 +248,9 @@ export default function App() {
     key: K,
     value: MeetingMetadata[K]
   ) => {
-    setCustomFullText(null);
+    if (!isManualEditLocked) {
+      setCustomFullText(null);
+    }
     setMetadata((prev) => ({
       ...prev,
       [key]: value,
@@ -242,6 +266,7 @@ export default function App() {
     setCapturedPhotos([]);
     setSelectedPhotoId(null);
     setCustomFullText(null);
+    setIsManualEditLocked(false);
     setApiError(null);
     setIsSessionExited(false);
     setMetadata(createCleanSessionMetadata(now));
@@ -280,6 +305,7 @@ export default function App() {
     setCapturedPhotos([]);
     setSelectedPhotoId(null);
     setCustomFullText(null);
+    setIsManualEditLocked(false);
     setApiError(null);
     setMetadata(createCleanSessionMetadata(now));
     setReport(createCleanSessionReport());
@@ -318,7 +344,117 @@ export default function App() {
     return parsed;
   };
 
-  // Routes a newly captured photo through Gemini Vision using ONLY current session context
+  /**
+   * Cross-Modal Fusion & Real-Time Re-Synchronization Engine:
+   * Combines ALL active session inputs (`buildUnifiedSessionContext`) and reconciles audio + OCR + slides.
+   */
+  const runCrossModalFusionSync = useCallback(
+    async (
+      latestChunks?: AudioChunkItem[],
+      latestPhotos?: CapturedPhotoItem[],
+      latestMeta?: MeetingMetadata,
+      forceUnlockManualEdit: boolean = false
+    ) => {
+      const activeChunks = latestChunks || chunksRef.current;
+      const activePhotos = latestPhotos || capturedPhotosRef.current;
+      const activeMeta = latestMeta || metadataRef.current;
+
+      const unifiedContext = buildUnifiedSessionContext(
+        activeChunks,
+        activePhotos,
+        activeMeta
+      );
+
+      const hasAudioKnowledge = unifiedContext.audioStreamData.length > 0;
+      const hasOcrKnowledge = unifiedContext.ocrUndanganData.length > 0;
+      const hasSlideKnowledge = unifiedContext.materiPaparanData.length > 0;
+
+      // Only invoke cross-modal fusion if there is at least one audio transcript or scanned OCR/Slide
+      if (!hasAudioKnowledge && !hasOcrKnowledge && !hasSlideKnowledge) {
+        return;
+      }
+
+      // If only OCR_UNDANGAN exists (no audio and no slide paparan yet), metadata is already synced directly
+      if (!hasAudioKnowledge && !hasSlideKnowledge && hasOcrKnowledge && !forceUnlockManualEdit) {
+        return;
+      }
+
+      setIsCrossModalSyncing(true);
+      try {
+        const response = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            mode: 'cross_modal_fusion',
+            unifiedContext,
+            metadata: activeMeta,
+          }),
+        });
+
+        const fused = (await parseApiResponseSafe(
+          response,
+          'Cross-Modal Fusion'
+        )) as MeetingReportResult;
+
+        const now = new Date();
+        const currentIso = getTodayIsoDate(now);
+
+        // Apply fused metadata & report unless manual edit lock is active
+        if (!isManualEditLockedRef.current || forceUnlockManualEdit) {
+          setCustomFullText(null);
+        }
+
+        setMetadata((prev) => ({
+          ...prev,
+          waktuSalam: detectWaktuSalam(now),
+          tanggalIso: currentIso,
+          judulKegiatan:
+            fused.judulKegiatan?.trim() || prev.judulKegiatan || '',
+          hariTanggal:
+            fused.hariTanggal?.trim() ||
+            prev.hariTanggal ||
+            formatIndonesianDate(currentIso),
+          pukul:
+            fused.pukul?.trim() || prev.pukul || detectCurrentTimeRange(now),
+          pimpinanRapat:
+            fused.pimpinanRapat?.trim() || prev.pimpinanRapat || '',
+          pesertaRapat:
+            fused.pesertaRapat?.trim() || prev.pesertaRapat || '',
+          tempat: fused.tempat?.trim() || prev.tempat || '',
+        }));
+
+        if (!isManualEditLockedRef.current || forceUnlockManualEdit) {
+          setReport((prev) => ({
+            judulKegiatan: fused.judulKegiatan || prev.judulKegiatan,
+            hariTanggal: fused.hariTanggal || prev.hariTanggal,
+            pukul: fused.pukul || prev.pukul,
+            pimpinanRapat: fused.pimpinanRapat || prev.pimpinanRapat,
+            pesertaRapat: fused.pesertaRapat || prev.pesertaRapat,
+            tempat: fused.tempat || prev.tempat,
+            isiKegiatan: fused.isiKegiatan?.trim() || prev.isiKegiatan,
+            executiveSummary:
+              fused.executiveSummary?.trim() || prev.executiveSummary,
+            actionItems:
+              Array.isArray(fused.actionItems) && fused.actionItems.length > 0
+                ? fused.actionItems
+                : prev.actionItems,
+            cleanTranscript:
+              fused.cleanTranscript?.trim() || prev.cleanTranscript,
+          }));
+        }
+      } catch (err: any) {
+        console.warn('Cross-Modal Fusion background warning:', err?.message);
+      } finally {
+        setIsCrossModalSyncing(false);
+      }
+    },
+    []
+  );
+
+  // Routes a newly captured photo through Gemini Vision using current session context & triggers Auto-Sync
   const routePhotoThroughVisionAI = async (
     photoId: string,
     cleanDataUrl: string,
@@ -369,75 +505,111 @@ export default function App() {
         );
       }
 
-      // Pipeline A: OCR_UNDANGAN -> Immediately update metadata & re-render report header
+      const updatedMeta: MeetingMetadata = {
+        ...metadataRef.current,
+        judulKegiatan:
+          result.judulKegiatan?.trim() || metadataRef.current.judulKegiatan,
+        hariTanggal:
+          result.hariTanggal?.trim() || metadataRef.current.hariTanggal,
+        pukul: result.pukul?.trim() || metadataRef.current.pukul,
+        tempat: result.tempat?.trim() || metadataRef.current.tempat,
+        pimpinanRapat:
+          result.pimpinanRapat?.trim() || metadataRef.current.pimpinanRapat,
+        pesertaRapat:
+          result.pesertaRapat?.trim() || metadataRef.current.pesertaRapat,
+      };
+
+      // Pipeline A: OCR_UNDANGAN -> Immediately update metadata & trigger Cross-Modal Fusion if audio/slides exist
       if (resolvedCategory === 'OCR_UNDANGAN') {
-        setCustomFullText(null);
-        setMetadata((prev) => ({
-          ...prev,
-          judulKegiatan: result.judulKegiatan?.trim() || prev.judulKegiatan,
-          hariTanggal: result.hariTanggal?.trim() || prev.hariTanggal,
-          pukul: result.pukul?.trim() || prev.pukul,
-          tempat: result.tempat?.trim() || prev.tempat,
-          pimpinanRapat: result.pimpinanRapat?.trim() || prev.pimpinanRapat,
-          pesertaRapat: result.pesertaRapat?.trim() || prev.pesertaRapat,
-        }));
+        if (!isManualEditLockedRef.current) {
+          setCustomFullText(null);
+        }
+        setMetadata(updatedMeta);
         setApiSuccessBanner(
-          'OCR Undangan Selesai: Judul, Tanggal, Jam, Tempat, Pimpinan & Peserta otomatis diperbarui!'
+          'OCR Undangan Selesai: Metadata & Ejaan Otoritatif otomatis disinkronkan!'
         );
       }
 
       // Pipeline B: MATERI_PAPARAN -> Synthesize slide knowledge into current session report
       if (resolvedCategory === 'MATERI_PAPARAN') {
-        setCustomFullText(null);
+        if (!isManualEditLockedRef.current) {
+          setCustomFullText(null);
+        }
         if (result.judulKegiatan?.trim() && !metadataRef.current.judulKegiatan) {
           setMetadata((prev) => ({
             ...prev,
             judulKegiatan: result.judulKegiatan!.trim(),
           }));
         }
-        if (result.isiKegiatanDraft?.trim()) {
+        if (result.isiKegiatanDraft?.trim() && !isManualEditLockedRef.current) {
           setReport((prev) => ({
             ...prev,
             isiKegiatan: result.isiKegiatanDraft!.trim(),
           }));
         }
         setApiSuccessBanner(
-          'Materi Paparan Dianalisis: Poin slide telah diintegrasikan ke dalam Laporan Kegiatan sesi ini!'
+          'Materi Paparan Dianalisis: Melakukan Cross-Modal Fusion dengan transkrip suara & undangan...'
         );
       }
 
       // Pipeline C: DOKUMENTASI_KEGIATAN -> Burn watermark & queue in attachmentPhotos[] for .docx
       if (resolvedCategory === 'DOKUMENTASI_KEGIATAN') {
-        setCustomFullText(null);
+        if (!isManualEditLockedRef.current) {
+          setCustomFullText(null);
+        }
         setApiSuccessBanner(
           'Lampiran Dokumentasi ditambahkan: Watermark [JUDUL - TANGGAL] disematkan & siap diekspor ke Word (.docx).'
         );
       }
 
-      setCapturedPhotos((prev) =>
-        prev.map((p) =>
-          p.id === photoId
-            ? {
-                ...p,
-                category: resolvedCategory,
-                displayDataUrl: finalDisplayUrl,
-                status: 'done',
-                confidenceReason: result.confidenceReason || resolvedCategory,
-                extractedText:
-                  result.extractedKnowledge ||
-                  result.judulKegiatan ||
-                  result.confidenceReason,
-              }
-            : p
-        )
+      const updatedPhotoFields: Partial<CapturedPhotoItem> = {
+        category: resolvedCategory,
+        displayDataUrl: finalDisplayUrl,
+        status: 'done',
+        confidenceReason: result.confidenceReason || resolvedCategory,
+        extractedText:
+          result.extractedKnowledge ||
+          result.judulKegiatan ||
+          result.confidenceReason,
+        isiKegiatanDraft: result.isiKegiatanDraft || '',
+        extractedMetadata: {
+          judulKegiatan: result.judulKegiatan,
+          hariTanggal: result.hariTanggal,
+          pukul: result.pukul,
+          tempat: result.tempat,
+          pimpinanRapat: result.pimpinanRapat,
+          pesertaRapat: result.pesertaRapat,
+        },
+      };
+
+      const nextPhotosSnapshot = capturedPhotosRef.current.map((p) =>
+        p.id === photoId ? { ...p, ...updatedPhotoFields } : p
       );
+
+      setCapturedPhotos((prev) =>
+        prev.map((p) => (p.id === photoId ? { ...p, ...updatedPhotoFields } : p))
+      );
+
+      // Automatic Real-Time Re-Synchronization Trigger whenever OCR_UNDANGAN or MATERI_PAPARAN finishes scanning
+      if (
+        resolvedCategory === 'OCR_UNDANGAN' ||
+        resolvedCategory === 'MATERI_PAPARAN'
+      ) {
+        await runCrossModalFusionSync(
+          chunksRef.current,
+          nextPhotosSnapshot,
+          updatedMeta
+        );
+      }
     } catch (err: any) {
       const fallbackWatermarked = await burnTacticalBannerWatermark(
         cleanDataUrl,
         metadataRef.current.judulKegiatan,
         metadataRef.current.hariTanggal
       );
-      setCustomFullText(null);
+      if (!isManualEditLockedRef.current) {
+        setCustomFullText(null);
+      }
       setCapturedPhotos((prev) =>
         prev.map((p) =>
           p.id === photoId
@@ -464,14 +636,15 @@ export default function App() {
   ) => {
     if (!rawDataUrls || rawDataUrls.length === 0) return;
     setApiError(null);
-    setCustomFullText(null);
+    if (!isManualEditLockedRef.current) {
+      setCustomFullText(null);
+    }
 
     const timeLabel = new Date().toLocaleTimeString('id-ID', {
       hour: '2-digit',
       minute: '2-digit',
     });
 
-    // Normalize and burn initial watermark on all uploaded/captured photos immediately
     const preparedItems = await Promise.all(
       rawDataUrls.map(async (rawUrl, idx) => {
         const cleanDataUrl = await stripExifAndNormalizeImage(rawUrl);
@@ -501,7 +674,6 @@ export default function App() {
       })
     );
 
-    // Append all new photos to capturedPhotos state in a single atomic functional update
     setCapturedPhotos((prev) => [...prev, ...preparedItems]);
     if (preparedItems.length > 0) {
       setSelectedPhotoId(preparedItems[preparedItems.length - 1].id);
@@ -514,7 +686,6 @@ export default function App() {
       return;
     }
 
-    // Route each photo through Vision AI without blocking or overwriting others
     for (const item of preparedItems) {
       await routePhotoThroughVisionAI(
         item.id,
@@ -540,7 +711,9 @@ export default function App() {
       );
     }
 
-    setCustomFullText(null);
+    if (!isManualEditLockedRef.current) {
+      setCustomFullText(null);
+    }
     setCapturedPhotos((prev) =>
       prev.map((p) =>
         p.id === photoId
@@ -564,7 +737,9 @@ export default function App() {
   };
 
   const handleRemovePhoto = (photoId: string) => {
-    setCustomFullText(null);
+    if (!isManualEditLockedRef.current) {
+      setCustomFullText(null);
+    }
     setCapturedPhotos((prev) => {
       const remaining = prev.filter((p) => p.id !== photoId);
       if (selectedPhotoId === photoId) {
@@ -599,30 +774,68 @@ export default function App() {
     setChunks((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // Multi-Modal Synthesis: Strictly synthesizes ONLY current session audio chunks + current session MATERI_PAPARAN photos
+  /**
+   * Multi-Modal Audio Transcription & Cross-Modal Fusion Engine:
+   * Transcribes any unprocessed audio chunks using OCR_UNDANGAN + MATERI_PAPARAN as Visual Spelling Anchors,
+   * then runs `runCrossModalFusionSync` across the unified session context.
+   */
   const handleProcessWithAI = async (overrideChunks?: AudioChunkItem[]) => {
-    const targetChunks = overrideChunks || chunks;
-    if (targetChunks.length === 0) return;
+    const targetChunks = overrideChunks || chunksRef.current;
+    if (targetChunks.length === 0) {
+      // Even if there are 0 audio chunks, allow re-syncing scanned OCR + Slide images
+      if (capturedPhotosRef.current.length > 0) {
+        await runCrossModalFusionSync(
+          chunksRef.current,
+          capturedPhotosRef.current,
+          metadataRef.current,
+          true
+        );
+      }
+      return;
+    }
 
     setIsProcessingAI(true);
     setApiError(null);
     setApiSuccessBanner(null);
 
     try {
-      const partialSummaries: MeetingReportResult[] = [];
       const currentMeta = metadataRef.current;
 
       const currentSessionPaparanKnowledge = capturedPhotosRef.current
         .filter((p) => p.category === 'MATERI_PAPARAN' && p.extractedText)
         .map((p) => p.extractedText!);
 
+      const currentSessionOcrKnowledge = capturedPhotosRef.current
+        .filter((p) => p.category === 'OCR_UNDANGAN')
+        .map((p) =>
+          JSON.stringify({
+            judulKegiatan: p.extractedMetadata?.judulKegiatan,
+            hariTanggal: p.extractedMetadata?.hariTanggal,
+            pukul: p.extractedMetadata?.pukul,
+            tempat: p.extractedMetadata?.tempat,
+            pimpinanRapat: p.extractedMetadata?.pimpinanRapat,
+            pesertaRapat: p.extractedMetadata?.pesertaRapat,
+            extractedText: p.extractedText,
+          })
+        );
+
       const currentSessionVisualFrames = capturedPhotosRef.current
         .filter((p) => p.cleanSourceDataUrl.startsWith('data:image/'))
         .map((p) => p.cleanSourceDataUrl);
 
-      for (let i = 0; i < targetChunks.length; i++) {
-        const chunk = targetChunks[i];
-        setProcessingStatusText(`Sintesis Audio & Slide Sesi Ini (#${i + 1})...`);
+      const updatedChunksList: AudioChunkItem[] = [...targetChunks];
+
+      for (let i = 0; i < updatedChunksList.length; i++) {
+        const chunk = updatedChunksList[i];
+
+        // If this chunk was already transcribed in this session, reuse its stored transcript & summary
+        if (chunk.status === 'done' && chunk.transcript && chunk.isiKegiatanSummary) {
+          continue;
+        }
+
+        setProcessingStatusText(
+          `Transkripsi & Rekonsiliasi Ejaan Suara (#${i + 1}/${updatedChunksList.length})...`
+        );
 
         setChunks((prev) =>
           prev.map((c) => (c.id === chunk.id ? { ...c, status: 'processing' } : c))
@@ -648,46 +861,72 @@ export default function App() {
             mimeType: chunk.mimeType,
             screenFrames: framesToSend,
             paparanKnowledge: currentSessionPaparanKnowledge,
+            ocrKnowledge: currentSessionOcrKnowledge,
             metadata: currentMeta,
             chunkIndex: i,
-            totalChunks: targetChunks.length,
+            totalChunks: updatedChunksList.length,
           }),
         });
 
-        const data = await parseApiResponseSafe(response, `Chunk #${i + 1}`);
-        partialSummaries.push(data as MeetingReportResult);
+        const data = (await parseApiResponseSafe(
+          response,
+          `Segmen Suara #${i + 1}`
+        )) as MeetingReportResult;
+
+        const enrichedChunk: AudioChunkItem = {
+          ...chunk,
+          status: 'done',
+          transcript: data.cleanTranscript || '',
+          isiKegiatanSummary: data.isiKegiatan || '',
+          extractedActionItems: Array.isArray(data.actionItems)
+            ? data.actionItems
+            : [],
+        };
+
+        updatedChunksList[i] = enrichedChunk;
+        saveAudioChunkToVault(enrichedChunk);
 
         setChunks((prev) =>
-          prev.map((c) => (c.id === chunk.id ? { ...c, status: 'done' } : c))
+          prev.map((c) => (c.id === chunk.id ? enrichedChunk : c))
         );
       }
 
-      let finalResult: MeetingReportResult = partialSummaries[0];
+      // Now execute Unified Cross-Modal Fusion across all audio segments + OCR_UNDANGAN + MATERI_PAPARAN
+      setProcessingStatusText(
+        'Fusi Lintas-Modal (Suara + OCR Undangan + Slide Paparan)...'
+      );
 
-      if (partialSummaries.length > 1) {
-        setProcessingStatusText('Menyintesiskan Laporan Sesi Ini...');
-        const synthResponse = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            mode: 'synthesize',
-            metadata: currentMeta,
-            paparanKnowledge: currentSessionPaparanKnowledge,
-            previousSummaries: partialSummaries,
-          }),
-        });
+      const unifiedContext = buildUnifiedSessionContext(
+        updatedChunksList,
+        capturedPhotosRef.current,
+        metadataRef.current
+      );
 
-        const synthData = await parseApiResponseSafe(synthResponse, 'Sintesis Laporan');
-        finalResult = synthData as MeetingReportResult;
-      }
+      const fusionResponse = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          mode: 'cross_modal_fusion',
+          unifiedContext,
+          metadata: metadataRef.current,
+        }),
+      });
+
+      const finalResult = (await parseApiResponseSafe(
+        fusionResponse,
+        'Cross-Modal Fusion'
+      )) as MeetingReportResult;
 
       const now = new Date();
       const currentIso = getTodayIsoDate(now);
 
-      setCustomFullText(null);
+      if (!isManualEditLockedRef.current) {
+        setCustomFullText(null);
+      }
+
       setMetadata((prev) => ({
         ...prev,
         waktuSalam: detectWaktuSalam(now),
@@ -710,21 +949,27 @@ export default function App() {
           (screenFrames.length > 0 ? 'Vicon Zoom Meeting' : ''),
       }));
 
-      setReport({
-        judulKegiatan: finalResult.judulKegiatan,
-        pimpinanRapat: finalResult.pimpinanRapat,
-        pesertaRapat: finalResult.pesertaRapat,
-        tempat: finalResult.tempat,
-        isiKegiatan: finalResult.isiKegiatan || '',
-        executiveSummary: finalResult.executiveSummary || '',
-        actionItems: Array.isArray(finalResult.actionItems)
-          ? finalResult.actionItems
-          : [],
-        cleanTranscript: finalResult.cleanTranscript || '',
-      });
+      if (!isManualEditLockedRef.current) {
+        setReport({
+          judulKegiatan: finalResult.judulKegiatan,
+          hariTanggal: finalResult.hariTanggal,
+          pukul: finalResult.pukul,
+          pimpinanRapat: finalResult.pimpinanRapat,
+          pesertaRapat: finalResult.pesertaRapat,
+          tempat: finalResult.tempat,
+          isiKegiatan: finalResult.isiKegiatan || '',
+          executiveSummary: finalResult.executiveSummary || '',
+          actionItems: Array.isArray(finalResult.actionItems)
+            ? finalResult.actionItems
+            : [],
+          cleanTranscript: finalResult.cleanTranscript || '',
+        });
+      }
 
       setApiSuccessBanner(
-        'Sintesis Selesai: Laporan kegiatan telah diperbarui dari rekaman suara & tangkapan foto sesi ini.'
+        `Fusi Lintas-Modal Selesai: ${updatedChunksList.length} Segmen Suara + ${
+          capturedPhotosRef.current.filter((p) => p.status === 'done').length
+        } Pindaian Gambar telah disinkronkan!`
       );
     } catch (err: any) {
       setApiError(err?.message || 'Gagal memproses rekaman rapat.');
@@ -734,6 +979,34 @@ export default function App() {
     } finally {
       setIsProcessingAI(false);
       setProcessingStatusText('');
+    }
+  };
+
+  // Toggle handler for "Kunci Edit Manual" / "Sinkron Ulang AI"
+  const handleToggleManualLockOrResync = async () => {
+    if (isManualEditLocked || customFullText !== null) {
+      // Unlock manual edit mode and force a fresh Cross-Modal Fusion re-sync
+      setIsManualEditLocked(false);
+      setCustomFullText(null);
+      if (chunksRef.current.some((c) => c.status !== 'done')) {
+        await handleProcessWithAI(chunksRef.current);
+      } else {
+        await runCrossModalFusionSync(
+          chunksRef.current,
+          capturedPhotosRef.current,
+          metadataRef.current,
+          true
+        );
+      }
+      setApiSuccessBanner(
+        'Sinkron Ulang AI Aktif: Laporan diselaraskan kembali dengan seluruh Segmen Suara & Pindaian Gambar.'
+      );
+    } else {
+      // Lock manual edit mode so background AI scans do not overwrite user's manual edits
+      setIsManualEditLocked(true);
+      setApiSuccessBanner(
+        'Kunci Edit Manual Aktif: Sinkronisasi otomatis dijeda untuk melindungi suntingan manual Anda.'
+      );
     }
   };
 
@@ -919,7 +1192,7 @@ export default function App() {
               <div>
                 &bull; Data Sesi:{' '}
                 <strong className="text-slate-100">
-                  {chunks.length} Chunk Audio &amp; {attachmentPhotos.length} Foto
+                  {chunks.length} Segmen Suara &amp; {attachmentPhotos.length} Foto
                   Lampiran (.docx)
                 </strong>
               </div>
@@ -1216,35 +1489,109 @@ export default function App() {
             />
           </div>
 
-          {/* 4. LIVE EDITABLE OFFICIAL REPORT PREVIEW (Unobstructed on Mobile & Tablet) */}
+          {/* 4. LIVE EDITABLE OFFICIAL REPORT PREVIEW WITH CROSS-MODAL AUTO-SYNC HEADER */}
           <div className="lg:col-span-6 h-full">
             <section className="bg-[#111827] border border-[#1E293B] rounded-xl p-2.5 sm:p-3 shadow-inner flex flex-col h-full space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
+              {/* Top Row: Title + Manual Lock / Re-Sync Toggle */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <span className="text-[11px] font-bold tracking-wider text-[#38BDF8] uppercase">
                   LAPORAN PELAKSANAAN KEGIATAN:
                 </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-emerald-300">
-                    Lampiran: {attachmentPhotos.length} Foto
-                  </span>
-                  {customFullText !== null && (
-                    <button
-                      type="button"
-                      onClick={() => setCustomFullText(null)}
-                      className="inline-flex items-center gap-1 text-[10px] text-[#F59E0B] hover:text-amber-300 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      Sinkronkan Ulang
-                    </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleManualLockOrResync}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border transition-colors cursor-pointer ${
+                    isManualEditLocked || customFullText !== null
+                      ? 'bg-[#F59E0B]/20 hover:bg-[#F59E0B]/30 border-[#F59E0B] text-amber-300'
+                      : 'bg-slate-800/90 hover:bg-slate-700 border-slate-600 text-slate-200'
+                  }`}
+                  title={
+                    isManualEditLocked || customFullText !== null
+                      ? 'Buka kunci manual & sinkronkan ulang laporan dengan seluruh Segmen Suara + Pindaian Gambar'
+                      : 'Kunci suntingan manual agar tidak ditimpa otomatis oleh Auto-Sync AI'
+                  }
+                >
+                  {isManualEditLocked || customFullText !== null ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 text-[#F59E0B]" />
+                      <span>Sinkron Ulang AI</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3 h-3 text-slate-300" />
+                      <span>Kunci Edit Manual</span>
+                    </>
                   )}
-                </div>
+                </button>
               </div>
+
+              {/* Second Row: Live Multi-Modal Cross-Reference Status Indicator */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5 bg-[#0B1120] border border-slate-800 rounded-lg px-2 py-1 text-[10px] font-mono">
+                <div className="inline-flex items-center gap-1.5 text-emerald-300">
+                  {isCrossModalSyncing || isProcessingAI ? (
+                    <Loader2 className="w-3 h-3 text-[#38BDF8] animate-spin shrink-0" />
+                  ) : (
+                    <Zap className="w-3 h-3 text-[#F59E0B] shrink-0" />
+                  )}
+                  <span>
+                    ⚡ Tersinkronisasi: {syncedAudioCount} Segmen Suara +{' '}
+                    {scannedImageCount} Pindaian Gambar
+                  </span>
+                </div>
+
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded ${
+                    isManualEditLocked || customFullText !== null
+                      ? 'bg-amber-950/90 text-amber-300 border border-amber-700/60'
+                      : 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/50'
+                  }`}
+                >
+                  {isManualEditLocked || customFullText !== null
+                    ? 'EDIT MANUAL TERKUNCI'
+                    : 'AUTO-SYNC AKTIF'}
+                </span>
+              </div>
+
               <textarea
                 rows={10}
                 value={displayedFullReportText}
-                onChange={(e) => setCustomFullText(e.target.value)}
+                onChange={(e) => {
+                  setCustomFullText(e.target.value);
+                  setIsManualEditLocked(true);
+                }}
                 className="flex-1 w-full bg-[#0B1120] border border-slate-700/90 focus:border-[#38BDF8] focus:outline-none rounded-lg p-2.5 text-xs text-slate-100 leading-relaxed resize-y font-sans"
               />
+
+              {/* Synchronized Action Items (Tindak Lanjut) Cross-Checked from Audio + Slides */}
+              {report.actionItems && report.actionItems.length > 0 && (
+                <div className="bg-[#0B1120] border border-slate-800 rounded-lg p-2 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-[#F59E0B] uppercase tracking-wider">
+                    <span className="inline-flex items-center gap-1">
+                      <ListChecks className="w-3.5 h-3.5" />
+                      Tindak Lanjut Terpadu (Suara + Slide): {report.actionItems.length}
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-400">
+                      Otomatis masuk Tabel Word (.docx)
+                    </span>
+                  </div>
+                  <div className="max-h-24 overflow-y-auto space-y-1 pr-1">
+                    {report.actionItems.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="text-[10px] bg-[#111827] border border-slate-800/90 rounded px-2 py-1 flex flex-wrap items-center justify-between gap-1"
+                      >
+                        <span className="text-slate-100 font-medium">
+                          {idx + 1}. {item.task}
+                        </span>
+                        <span className="font-mono text-[9px] text-[#38BDF8]">
+                          PIC: {item.pic || '-'} | Target: {item.deadline || '-'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         </div>

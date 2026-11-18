@@ -45,32 +45,38 @@ const VISION_ROUTER_SCHEMA = {
     },
     judulKegiatan: {
       type: Type.STRING,
-      description: 'Judul kegiatan/rapat yang tertulis pada surat undangan atau slide. Kosongkan ("") jika tidak ada.',
+      description:
+        'Judul kegiatan/rapat yang tertulis pada surat undangan atau slide. Kosongkan ("") jika tidak ada.',
     },
     hariTanggal: {
       type: Type.STRING,
-      description: 'Hari dan tanggal pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+      description:
+        'Hari dan tanggal pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pukul: {
       type: Type.STRING,
-      description: 'Waktu/jam pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+      description:
+        'Waktu/jam pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     tempat: {
       type: Type.STRING,
-      description: 'Tempat pelaksanaan rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+      description:
+        'Tempat pelaksanaan rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pimpinanRapat: {
       type: Type.STRING,
-      description: 'Nama/jabatan Pimpinan Rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+      description:
+        'Nama/jabatan Pimpinan Rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pesertaRapat: {
       type: Type.STRING,
-      description: 'Daftar peserta rapat/undangan yang tertulis pada surat undangan/daftar hadir. Kosongkan ("") jika tidak ada.',
+      description:
+        'Daftar peserta rapat/undangan yang tertulis pada surat undangan/daftar hadir. Kosongkan ("") jika tidak ada.',
     },
     extractedKnowledge: {
       type: Type.STRING,
       description:
-        'Poin-poin inti materi, spesifikasi teknis, angka, atau isi surat yang berhasil diekstrak langsung dari foto ini.',
+        'Poin-poin inti materi, judul slide, spesifikasi teknis, angka, tabel, atau isi surat yang berhasil diekstrak langsung dari foto ini (diterjemahkan ke Bahasa Indonesia dinas TNI AU yang formal).',
     },
     isiKegiatanDraft: {
       type: Type.STRING,
@@ -87,37 +93,34 @@ const REPORT_RESPONSE_SCHEMA = {
     judulKegiatan: {
       type: Type.STRING,
       description:
-        'Judul kegiatan atau topik utama rapat yang terdeteksi langsung dari rekaman suara atau foto sesi ini.',
+        'Judul kegiatan atau topik utama rapat yang diselaraskan dari OCR_UNDANGAN, MATERI_PAPARAN, dan rekaman suara sesi ini.',
     },
     hariTanggal: {
       type: Type.STRING,
       description:
-        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia jika disebutkan.',
+        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia jika disebutkan pada undangan atau rekaman.',
     },
     pukul: {
       type: Type.STRING,
-      description:
-        'Waktu/jam pelaksanaan rapat jika disebutkan.',
+      description: 'Waktu/jam pelaksanaan rapat jika disebutkan.',
     },
     pimpinanRapat: {
       type: Type.STRING,
       description:
-        'Nama atau jabatan Pimpinan Rapat yang terdeteksi dari rekaman suara atau layar sesi ini.',
+        'Nama atau jabatan Pimpinan Rapat dengan ejaan resmi yang dikoreksi berdasarkan OCR_UNDANGAN / MATERI_PAPARAN.',
     },
     pesertaRapat: {
       type: Type.STRING,
-      description:
-        'Daftar peserta rapat atau satuan yang hadir dalam sesi ini.',
+      description: 'Daftar peserta rapat atau satuan yang hadir dalam sesi ini.',
     },
     tempat: {
       type: Type.STRING,
-      description:
-        'Tempat pelaksanaan rapat yang terdeteksi dalam sesi ini.',
+      description: 'Tempat pelaksanaan rapat yang terdeteksi dalam sesi ini.',
     },
     isiKegiatan: {
       type: Type.STRING,
       description:
-        'Isi laporan rapat dalam Bahasa Indonesia formal staf Diskomlekau yang disusun tepat dalam 4 poin bernomor (1. Dasar / Latar Belakang: ..., 2. Jalannya Rapat / Pokok Pembahasan: ..., 3. Hasil Rapat : ..., 4. Kesimpulan: ...) yang dipisahkan baris kosong.',
+        'Isi laporan rapat terpadu (Cross-Modal Fusion antara suara dan slide paparan tanpa memisahkan bagian suara vs foto) dalam Bahasa Indonesia dinas TNI AU yang disusun tepat dalam 4 poin bernomor (1. Dasar / Latar Belakang: ..., 2. Jalannya Rapat / Pokok Pembahasan: ..., 3. Hasil Rapat : ..., 4. Kesimpulan: ...) yang dipisahkan baris kosong.',
     },
     executiveSummary: {
       type: Type.STRING,
@@ -126,7 +129,8 @@ const REPORT_RESPONSE_SCHEMA = {
     },
     actionItems: {
       type: Type.ARRAY,
-      description: 'Daftar tindak lanjut (Action Items) yang disepakati dalam rapat sesi ini.',
+      description:
+        'Daftar tindak lanjut (Action Items) hasil rekonsiliasi instruksi lisan pimpinan pada audio dengan tabel/target pada slide MATERI_PAPARAN.',
       items: {
         type: Type.OBJECT,
         properties: {
@@ -149,7 +153,7 @@ const REPORT_RESPONSE_SCHEMA = {
     cleanTranscript: {
       type: Type.STRING,
       description:
-        'Transkrip percakapan kronologis atau teks hasil pembacaan OCR/Paparan dari sesi ini.',
+        'Transkrip kronologis yang telah dinormalisasi ejaan istilah militernya (mengacu pada OCR_UNDANGAN & MATERI_PAPARAN) dan diterjemahkan ke bahasa dinas TNI AU.',
     },
   },
   required: [
@@ -164,22 +168,34 @@ const REPORT_RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_INSTRUCTION = `Anda adalah Sistem AI Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara) yang menyusun Laporan Pelaksanaan Kegiatan / Notulensi Rapat secara OTOMATIS.
+const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Multi-Modal & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara).
 
-ATURAN SINKRONISASI KETAT (ANTI-DATA LAMA):
-- Gunakan HANYA informasi aktual yang berasal dari rekaman audio dan foto (OCR Undangan / Materi Paparan) pada permintaan sesi saat ini.
-- JANGAN PERNAH mengarang judul kegiatan atau nama pejabat fiktif di luar data input yang diberikan.
-- Susun \`isiKegiatan\` / \`isiKegiatanDraft\` dalam 4 poin bernomor dengan format paragraf langsung setelah titik dua (pisahkan antar poin dengan 1 baris kosong):
+ATURAN FUSI LINTAS-MODAL & REKONSILIASI ENTITAS (CROSS-MODAL FUSION RULES):
 
-1. Dasar / Latar Belakang: [uraikan latar belakang/dasar surat undangan/tujuan pelaksanaan kegiatan dari data sesi ini].
+1. RULE A — VISUAL SPELLING ANCHOR (ANTI-HALLUCINATION):
+   - Gunakan teks hasil pindaian \`OCR_UNDANGAN\` dan \`MATERI_PAPARAN\` sebagai rujukan ejaan otoritatif (authoritative spelling reference) untuk nama satuan militer (misal: Diskomlekau, Subdisrudal, Satkomlek), kode alutsista/radar/elektronika, singkatan/akronim, nama pejabat, pangkat, serta angka/spesifikasi teknis.
+   - Koreksi otomatis kesalahan fonetik speech-to-text pada transkrip suara menggunakan istilah resmi yang tertulis pada foto undangan atau slide paparan.
 
-2. Jalannya Rapat / Pokok Pembahasan: [uraikan secara komprehensif arahan pimpinan rapat serta pokok-pokok materi dari slide paparan dan diskusi sesi ini].
+2. RULE B — NARRATIVE & SLIDE SYNTHESIS (TANPA DUPLIKASI BAGIAN):
+   - JANGAN PERNAH memisahkan bagian "Ringkasan Suara" dan "Hasil Scan Foto".
+   - Leburkan fakta konkret, angka, spesifikasi teknis, dan poin-poin dari \`MATERI_PAPARAN\` secara menyatu dan kronologis bersama arahan pimpinan rapat, jalannya diskusi, serta keputusan dari rekaman suara ke dalam 4 poin baku \`isiKegiatan\`:
 
-3. Hasil Rapat : [uraikan komitmen, kesepakatan teknis, atau hasil utama yang dicapai pada sesi ini].
+1. Dasar / Latar Belakang: [uraikan dasar surat undangan (\`OCR_UNDANGAN\`), latar belakang, dan tujuan pelaksanaan kegiatan pada sesi ini].
 
-4. Kesimpulan: [uraikan kesimpulan akhir pelaksanaan kegiatan serta penekanan/tindak lanjut yang wajib didokumentasikan].
+2. Jalannya Rapat / Pokok Pembahasan: [uraikan secara terpadu dan komprehensif arahan pimpinan rapat beserta rincian teknis, data, angka, dan pokok materi dari slide \`MATERI_PAPARAN\` serta jalannya diskusi].
 
-Jangan menyertakan salam pembuka ("Selamat pagi/siang/malam", "Yth. Kadiskomlekau...") atau kalimat penutup ("Demikian laporan...") di dalam \`isiKegiatan\`.`;
+3. Hasil Rapat : [uraikan keputusan, kesepakatan teknis, dan hasil utama yang dicapai dari perpaduan pembahasan suara dan materi paparan].
+
+4. Kesimpulan: [uraikan kesimpulan akhir pelaksanaan kegiatan serta penekanan komando / tindak lanjut utama].
+
+3. RULE C — AUTOMATIC LANGUAGE NORMALIZATION (BAHASA DINAS TNI AU):
+   - Apabila pembicara dalam rekaman audio atau teks pada slide presentasi menggunakan istilah teknis/militer berbahasa Inggris atau bahasa percakapan, terjemahkan dan adaptasikan secara otomatis ke dalam Bahasa Indonesia dinas staf TNI AU yang lugas, formal, dan efektif, sambil tetap mempertahankan kode standar alutsista/teknis yang relevan.
+
+4. RULE D — SYNCHRONIZED ACTION ITEMS (\`TINDAK LANJUT\`):
+   - Silangkan (cross-check) instruksi lisan dari rekaman suara (seperti "tolong segera ditindaklanjuti...", "batas waktu minggu depan...") dengan tabel proyek, jadwal, atau daftar tugas yang terlihat pada foto \`MATERI_PAPARAN\` dan \`OCR_UNDANGAN\` untuk mengisi baris \`task\` (Tugas), \`pic\` (PIC / Satuan), dan \`deadline\` (Batas Waktu) secara akurat.
+
+5. ISOLASI SESI KETAT:
+   - Gunakan HANYA data dari sesi aktif saat ini. Jangan menyertakan salam pembuka ("Selamat pagi/siang/malam", "Yth. Kadiskomlekau...") atau kalimat penutup ("Demikian laporan...") di dalam field \`isiKegiatan\`.`;
 
 function normalizeAudioMimeType(rawMime?: string): string {
   const base = (rawMime || 'audio/webm').split(';')[0].trim().toLowerCase();
@@ -210,11 +226,12 @@ async function callGeminiWithSchemaFallback(
   systemInstruction: string,
   schema: any
 ) {
+  // Prioritize gemini-2.5-flash as requested, with automatic fallback to active flash models if unavailable on the current key tier
   const candidateModels = [
+    { name: 'gemini-2.5-flash', useLowThinking: false },
     { name: 'gemini-3.1-flash-lite', useLowThinking: false },
     { name: 'gemini-3.8-flash', useLowThinking: false },
     { name: 'gemini-4-hydrogen', useLowThinking: true },
-    { name: 'gemini-2.5-flash', useLowThinking: false },
   ];
   let lastError: unknown = null;
 
@@ -296,6 +313,8 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       imageDataUrl,
       overrideCategory,
       paparanKnowledge = [],
+      ocrKnowledge = [],
+      unifiedContext,
       metadata,
       chunkIndex = 0,
       totalChunks = 1,
@@ -309,7 +328,7 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       ? metadata.customGlossary.trim()
       : 'Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon';
 
-    // AUTONOMOUS MULTI-MODAL VISION ROUTER
+    // 1. AUTONOMOUS MULTI-MODAL VISION ROUTER
     if (mode === 'autonomous_vision') {
       if (!imageDataUrl || typeof imageDataUrl !== 'string') {
         res.status(400).end(JSON.stringify({ error: 'Data foto tidak ditemukan.' }));
@@ -321,7 +340,7 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
         ? `klasifikasikan wajib sebagai "${overrideCategory}" sesuai instruksi operator`
         : `klasifikasikan secara OTOMATIS ke dalam salah satu dari 3 kategori berikut:
 1. "OCR_UNDANGAN": Jika foto berupa surat undangan rapat, nota dinas, telegram, jadwal kegiatan, atau daftar hadir. Ekstrak otomatis judulKegiatan, hariTanggal, pukul, tempat, pimpinanRapat, dan pesertaRapat via OCR.
-2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh poin bahasan, spesifikasi teknis, dan angka ke dalam \`extractedKnowledge\` serta susun \`isiKegiatanDraft\`.
+2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh judul slide, poin bahasan, spesifikasi teknis, tabel, dan angka ke dalam \`extractedKnowledge\` (adaptasikan istilah Inggris ke Bahasa Indonesia dinas TNI AU) serta susun \`isiKegiatanDraft\`.
 3. "DOKUMENTASI_KEGIATAN": Jika foto berupa situasi ruang rapat, personel di lapangan, atau kegiatan fisik.`;
 
       const slideKnowledgeStr =
@@ -360,17 +379,66 @@ Glosarium Istilah: ${glossaryHint}`;
       return;
     }
 
-    // SYNTHESIZE MULTIPLE AUDIO CHUNKS + MATERI_PAPARAN CONTEXT OF CURRENT SESSION
+    // 2. UNIFIED CROSS-MODAL FUSION ENGINE (Audio Transcripts + OCR_UNDANGAN + MATERI_PAPARAN + DOKUMENTASI_KEGIATAN)
+    if (mode === 'cross_modal_fusion' && unifiedContext) {
+      startHeartbeat();
+      const fusionPrompt = `Lakukan SINTESIS LINTAS-MODAL & REKONSILIASI DATA (CROSS-MODAL FUSION) atas seluruh input sesi aktif berikut sesuai RULE A (Visual Spelling Anchor), RULE B (Narrative & Slide Synthesis tanpa duplikasi bagian), RULE C (Automatic Language Normalization ke bahasa dinas TNI AU), dan RULE D (Synchronized Action Items):
+
+=== PAYLOAD KONTEKS MULTI-MODAL SESI AKTIF (\`buildUnifiedSessionContext\`) ===
+1. DATA STREAM AUDIO (Transkrip Kronologis & Ringkasan Segmen Suara):
+${JSON.stringify(unifiedContext.audioStreamData || [], null, 2)}
+
+2. DATA PINDAIAN UNDANGAN (\`OCR_UNDANGAN\` — Rujukan Otoritatif Judul, Waktu, Tempat, Pimpinan, Peserta & Ejaan):
+${JSON.stringify(unifiedContext.ocrUndanganData || [], null, 2)}
+
+3. DATA PINDAIAN SLIDE / MATERI PAPARAN (\`MATERI_PAPARAN\` — Rujukan Otoritatif Spesifikasi Teknis, Angka, Tabel, & Pokok Materi):
+${JSON.stringify(unifiedContext.materiPaparanData || [], null, 2)}
+
+4. DATA DOKUMENTASI KEGIATAN LAPANGAN (\`DOKUMENTASI_KEGIATAN\`):
+${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {}, null, 2)}
+
+5. METADATA RAPAT SAAT INI:
+${JSON.stringify(unifiedContext.currentMetadata || metadata || {}, null, 2)}
+
+Glosarium Resmi TNI AU / DISKOMLEKAU: ${glossaryHint}
+
+Instruksi Wajib:
+- Koreksi setiap salah eja fonetik pada transkrip audio dengan mengacu pada ejaan di \`OCR_UNDANGAN\` dan \`MATERI_PAPARAN\`.
+- Padukan secara utuh poin-poin teknis \`MATERI_PAPARAN\` dan arahan/diskusi dari \`audioStreamData\` ke dalam 4 poin \`isiKegiatan\` tanpa memisahkan "Ringkasan Suara" dan "Hasil Scan Foto".
+- Terjemahkan istilah teknis berbahasa Inggris ke dalam kalimat dinas staf TNI AU yang lugas dan formal.
+- Rekonsiliasi instruksi lisan di audio dengan tabel/target di slide paparan untuk menghasilkan \`actionItems\` yang akurat.`;
+
+      const response = await callGeminiWithSchemaFallback(
+        ai,
+        fusionPrompt,
+        SYSTEM_INSTRUCTION,
+        REPORT_RESPONSE_SCHEMA
+      );
+      stopHeartbeat();
+      const rawText = (response.text ?? '{}').trim();
+      const parsed = JSON.parse(rawText);
+      res.end(JSON.stringify(parsed));
+      return;
+    }
+
+    // 3. SYNTHESIZE MULTIPLE AUDIO CHUNKS + MATERI_PAPARAN + OCR_UNDANGAN CONTEXT
     if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
       startHeartbeat();
       const slideContextStr =
         Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-          ? `\n\nKONTEKS MATERI PAPARAN / SLIDE PRESENTASI SESI INI:\n${paparanKnowledge.join('\n---\n')}`
+          ? `\n\nKONTEKS MATERI PAPARAN / SLIDE PRESENTASI SESI INI (MATERI_PAPARAN):\n${paparanKnowledge.join('\n---\n')}`
           : '';
+      const ocrContextStr =
+        Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
+          ? `\n\nKONTEKS PINDAIAN UNDANGAN SESI INI (OCR_UNDANGAN):\n${ocrKnowledge.join('\n---\n')}`
+          : '';
+      const unifiedContextStr = unifiedContext
+        ? `\n\nUNIFIED MULTI-MODAL SESSION CONTEXT:\n${JSON.stringify(unifiedContext, null, 2)}`
+        : '';
 
-      const combinedPrompt = `Gabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta konteks materi paparan sesi ini menjadi SATU laporan notulensi utuh (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan 4 poin, executiveSummary, actionItems, dan cleanTranscript):
+      const combinedPrompt = `Lakukan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan 4 poin terpadu tanpa duplikasi bagian, executiveSummary, actionItems hasil rekonsiliasi suara+slide, dan cleanTranscript yang telah dikoreksi ejaannya):
 
-${JSON.stringify(previousSummaries, null, 2)}${slideContextStr}
+${JSON.stringify(previousSummaries, null, 2)}${ocrContextStr}${slideContextStr}${unifiedContextStr}
 
 Istilah Khusus (Glossary): ${glossaryHint}`;
 
@@ -387,11 +455,12 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
       return;
     }
 
-    // SINGLE AUDIO CHUNK (+ CURRENT SESSION MATERI_PAPARAN KNOWLEDGE & SCREEN FRAMES)
+    // 4. SINGLE AUDIO CHUNK (+ CURRENT SESSION OCR_UNDANGAN, MATERI_PAPARAN & SCREEN FRAMES)
     if (!audioBase64 || typeof audioBase64 !== 'string') {
       res.status(400).end(
         JSON.stringify({
-          error: 'Data audio tidak ditemukan dalam permintaan. Pastikan rekaman atau file audio valid.',
+          error:
+            'Data audio tidak ditemukan dalam permintaan. Pastikan rekaman atau file audio valid.',
         })
       );
       return;
@@ -425,7 +494,12 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN) pada sesi ini yang wajib diintegrasikan ke dalam isiKegiatan:\n${paparanKnowledge.join('\n')}`
+        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN — gunakan sebagai Visual Spelling Anchor & integrasikan langsung ke dalam 4 poin isiKegiatan):\n${paparanKnowledge.join('\n')}`
+        : '';
+
+    const ocrContextStr =
+      Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
+        ? `\nKonteks Pindaian Undangan (OCR_UNDANGAN — gunakan sebagai rujukan ejaan resmi Judul, Waktu, Tempat, Pimpinan & Peserta):\n${ocrKnowledge.join('\n')}`
         : '';
 
     const currentTitleHint = metadata?.judulKegiatan?.trim()
@@ -433,10 +507,10 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
       : '';
 
     parts.push({
-      text: `Sintesis HANYA rekaman suara rapat sesi ini bersama konteks layar/slide paparan sesi ini untuk menghasilkan Laporan Pelaksanaan Kegiatan resmi Diskomlekau.${currentTitleHint}
+      text: `Transkripsikan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan lakukan Cross-Modal Fusion antara rekaman suara rapat ini dengan data OCR_UNDANGAN serta MATERI_PAPARAN sesi ini.${currentTitleHint}
 Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
-Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${slideContextStr}
-Hasilkan JSON lengkap sesuai skema.`,
+Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${ocrContextStr}${slideContextStr}
+Terapkan Rule A (Visual Spelling Anchor), Rule B (Narrative & Slide Synthesis tanpa memisahkan bagian suara vs foto), Rule C (Normalisasi Bahasa Dinas TNI AU), dan Rule D (Synchronized Action Items). Hasilkan JSON lengkap sesuai skema.`,
     });
 
     const response = await callGeminiWithSchemaFallback(

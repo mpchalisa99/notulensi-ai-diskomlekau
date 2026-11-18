@@ -516,7 +516,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         onAddChunk(newChunk);
 
         if (autoProcessOnStopRef.current) {
-          autoProcessOnStopRef.current = false;
           setTimeout(() => {
             onProcessWithAI([...chunksRef.current, newChunk]);
           }, 250);
@@ -535,6 +534,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (!currentRecorder || !dest || currentRecorder.state === 'inactive') return;
 
     captureFrameFromDisplayTrack();
+    autoProcessOnStopRef.current = true;
     const mimeType = currentRecorder.mimeType || getSupportedMimeType();
     currentRecorder.stop();
     setCurrentChunkNumber((prev) => prev + 1);
