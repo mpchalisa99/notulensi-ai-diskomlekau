@@ -489,6 +489,18 @@ app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
 });
 
 async function startServer() {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path === '/manifest.webmanifest') {
+      res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+    } else if (req.path === '/sw.js') {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Service-Worker-Allowed', '/');
+    }
+    next();
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

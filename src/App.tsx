@@ -46,6 +46,10 @@ import {
   FullscreenCameraModal,
   CollapsibleDataCaptureTray,
 } from './components/TacticalCameraAndTray';
+import {
+  PWAInstallButton,
+  OfflineIndicator,
+} from './components/PWAInstallButton';
 
 const CATEGORY_CYCLE: VisionCategory[] = [
   'OCR_UNDANGAN',
@@ -631,8 +635,8 @@ export default function App() {
         onAutonomousPhotoCapture={handleAutonomousPhotoCapture}
       />
 
-      {/* Fullscreen Tactical Workspace Container */}
-      <div className="w-full max-w-xl lg:max-w-5xl mx-auto flex-1 flex flex-col justify-between p-2 sm:p-3 space-y-2">
+      {/* Fullscreen Tactical Workspace Container with Safe-Area Insets */}
+      <div className="w-full max-w-xl lg:max-w-5xl mx-auto flex-1 flex flex-col justify-between px-2 sm:px-3 pt-safe-top pb-safe-bottom space-y-2">
         {/* 1. AEGIS-BRIEF DISKOMLEKAU TACTICAL COMMAND HEADER */}
         <header className="bg-gradient-to-b from-[#162E4D] to-[#0F2138] border border-[#1E293B] rounded-xl px-3 py-2 shadow-lg flex items-center justify-between gap-2">
           <WingCrestEmblem className="w-10 h-10 sm:w-12 sm:h-12" />
@@ -649,17 +653,21 @@ export default function App() {
           <KomlekOmegaEmblem className="w-10 h-10 sm:w-12 sm:h-12" />
         </header>
 
-        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Open Fullscreen Camera) */}
-        <div className="flex items-center justify-between gap-2 bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-1.5">
-          <button
-            type="button"
-            onClick={handleResetSession}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-950/75 hover:bg-red-900 active:scale-95 border border-red-700/70 text-red-200 hover:text-white text-[11px] font-bold tracking-wide transition-all cursor-pointer"
-            title="Hapus seluruh data sesi sebelumnya (Audio, Foto, OCR & Laporan) dan mulai sesi rapat baru"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-red-400" />
-            <span>Sesi Baru / Reset Data</span>
-          </button>
+        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Install App PWA + Open Fullscreen Camera) */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5 bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleResetSession}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-950/75 hover:bg-red-900 active:scale-95 border border-red-700/70 text-red-200 hover:text-white text-[11px] font-bold tracking-wide transition-all cursor-pointer"
+              title="Hapus seluruh data sesi sebelumnya (Audio, Foto, OCR & Laporan) dan mulai sesi rapat baru"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-red-400" />
+              <span>Sesi Baru / Reset Data</span>
+            </button>
+
+            <PWAInstallButton />
+          </div>
 
           <button
             type="button"
@@ -671,6 +679,8 @@ export default function App() {
             <span>Ambil Foto (Fullscreen Cam)</span>
           </button>
         </div>
+
+        <OfflineIndicator />
 
         {/* Status Alerts */}
         {apiError && (
