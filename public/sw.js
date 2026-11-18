@@ -1,13 +1,15 @@
-const CACHE_NAME = 'aegis-brief-diskomlekau-v1';
+const CACHE_NAME = 'aegis-brief-diskomlekau-v2';
 const CORE_ASSETS = [
   '/',
   '/index.html',
-  '/manifest.webmanifest',
-  '/icon.svg',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-maskable-512.png',
-  '/apple-touch-icon.png',
+  '/manifest.webmanifest?v=2',
+  '/icon.svg?v=2',
+  '/icon-192.png?v=2',
+  '/icon-512.png?v=2',
+  '/icon-maskable-512.png?v=2',
+  '/apple-touch-icon.png?v=2',
+  '/favicon.png?v=2',
+  '/favicon.ico?v=2',
 ];
 
 self.addEventListener('install', (event) => {

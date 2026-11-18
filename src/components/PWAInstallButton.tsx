@@ -141,11 +141,20 @@ export const PWAInstallButton: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-[#38BDF8]" />
-                <h3 className="text-sm font-extrabold tracking-wider uppercase text-white">
-                  Instal AEGIS-BRIEF ke Layar Utama
-                </h3>
+              <div className="flex items-center gap-2.5">
+                <img
+                  src="/icon-192.png?v=2"
+                  alt="AEGIS-BRIEF App Icon"
+                  className="w-9 h-9 rounded-xl border border-[#F59E0B]/60 shadow-md shrink-0"
+                />
+                <div>
+                  <h3 className="text-xs sm:text-sm font-extrabold tracking-wider uppercase text-white">
+                    Instal AEGIS-BRIEF ke Layar Utama
+                  </h3>
+                  <p className="text-[10px] text-amber-300 font-medium">
+                    Ikon Taktis Perisai Elektronika DISKOMLEKAU
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
