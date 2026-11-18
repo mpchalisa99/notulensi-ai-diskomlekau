@@ -49,8 +49,7 @@ export function formatIndonesianDate(isoDateString: string): string {
   return `${namaHari}, ${day} ${namaBulan} ${year}`;
 }
 
-export function getTodayIsoDate(): string {
-  const now = new Date();
+export function getTodayIsoDate(now: Date = new Date()): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
@@ -73,8 +72,40 @@ export function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+export function createCleanSessionMetadata(now: Date = new Date()): MeetingMetadata {
+  const iso = getTodayIsoDate(now);
+  return {
+    waktuSalam: detectWaktuSalam(now),
+    judulKegiatan: '',
+    tanggalIso: iso,
+    hariTanggal: formatIndonesianDate(iso),
+    pukul: detectCurrentTimeRange(now),
+    tempat: '',
+    pimpinanRapat: '',
+    pesertaRapat: '',
+    customGlossary:
+      'Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon',
+  };
+}
+
+export function createCleanSessionReport(): MeetingReportResult {
+  return {
+    judulKegiatan: '',
+    hariTanggal: '',
+    pukul: '',
+    pimpinanRapat: '',
+    pesertaRapat: '',
+    tempat: '',
+    isiKegiatan:
+      '1. Dasar / Latar Belakang: -\n\n2. Jalannya Rapat / Pokok Pembahasan: -\n\n3. Hasil Rapat : -\n\n4. Kesimpulan: -',
+    executiveSummary: '',
+    actionItems: [],
+    cleanTranscript: '',
+  };
+}
+
 /**
- * Renders the exact official Diskomlekau Notulen template specified in Section 4.
+ * Renders the exact official Diskomlekau Notulen template dynamically bound to current metadata & isiKegiatan.
  */
 export function buildOfficialReportText(
   metadata: MeetingMetadata,
@@ -82,11 +113,10 @@ export function buildOfficialReportText(
 ): string {
   const waktuSalam = metadata.waktuSalam || detectWaktuSalam();
   const judulKegiatan =
-    metadata.judulKegiatan?.trim() ||
-    'Rapat Uji Fungsi Pengadaan Armor Personel Carrier';
+    metadata.judulKegiatan?.trim() || '[Judul Kegiatan Belum Diisi]';
   const hariTanggal = metadata.hariTanggal?.trim() || '-';
   const pukul = metadata.pukul?.trim() || '-';
-  const tempat = metadata.tempat?.trim() || 'Posko Utama Diskomlekau';
+  const tempat = metadata.tempat?.trim() || '-';
   const pimpinanRapat = metadata.pimpinanRapat?.trim() || '-';
   const pesertaRapat = metadata.pesertaRapat?.trim() || '-';
   const body =
@@ -127,34 +157,3 @@ export function blobToBase64(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
-
-export const INITIAL_SAMPLE_REPORT: MeetingReportResult = {
-  judulKegiatan: 'Rapat Uji Fungsi Pengadaan Armor Personel Carrier',
-  pimpinanRapat: 'Kolonel Lek Budi, ST, MH',
-  pesertaRapat:
-    'Komandan Satrad 421 Teluk Naga, Staf Satrad 421 Teluk Naga, Perwakilan PT Tabel Aero, Tim Uji Fungsi',
-  tempat: 'Posko Utama / Vicon Zoom Meeting',
-  isiKegiatan: `1. Dasar / Latar Belakang: Rapat dilaksanakan dalam rangka koordinasi teknis dan persiapan pelaksanaan uji fungsi pengadaan Armor Personel Carrier yang merupakan sarana mobilitas perlindungan personel.
-
-2. Jalannya Rapat / Pokok Pembahasan: Pimpinan rapat membuka kegiatan dan menyampaikan arahan terkait pentingnya profesionalisme dan ketelitian dalam pelaksanaan uji fungsi sesuai parameter teknis serta operasional yang telah disepakati. Kegiatan ini bersumber dari anggaran optimalisasi TNI AU.
-
-3. Hasil Rapat : Seluruh pihak diminta berkomitmen dan bersinergi dalam pelaksanaan kegiatan agar berjalan dengan sebaik-baiknya.
-
-4. Kesimpulan: Uji fungsi akan dilaksanakan dengan menjunjung tinggi standar operasional yang telah ditetapkan. Seluruh bentuk catatan evaluasi dan perbaikan selama uji fungsi wajib didokumentasikan.`,
-  executiveSummary:
-    'Rapat dilaksanakan dalam rangka koordinasi teknis dan persiapan pelaksanaan uji fungsi pengadaan Armor Personel Carrier yang bersumber dari anggaran optimalisasi TNI AU. Pimpinan rapat menekankan profesionalisme, ketelitian, serta sinergi seluruh pihak sesuai parameter teknis dan operasional yang disepakati.',
-  actionItems: [
-    {
-      task: 'Melaksanakan uji fungsi pengadaan Armor Personel Carrier sesuai parameter teknis dan standar operasional',
-      pic: 'Tim Uji Fungsi, Satrad 421 Teluk Naga & PT Tabel Aero',
-      deadline: 'Sesuai jadwal uji fungsi',
-    },
-    {
-      task: 'Mendokumentasikan seluruh catatan evaluasi dan perbaikan selama pelaksanaan uji fungsi',
-      pic: 'Tim Uji Fungsi & Staf Satrad 421 Teluk Naga',
-      deadline: 'Selama pelaksanaan kegiatan',
-    },
-  ],
-  cleanTranscript: `[00:00] Kolonel Lek Budi, ST, MH (Pimpinan Rapat): Selamat malam, terima kasih kepada Komandan Satrad 421 Teluk Naga beserta staf, Perwakilan PT Tabel Aero, dan Tim Uji Fungsi yang telah bergabung.
-[01:10] Kolonel Lek Budi, ST, MH: Rapat ini kita laksanakan dalam rangka koordinasi teknis dan persiapan pelaksanaan uji fungsi pengadaan Armor Personel Carrier sebagai sarana mobilitas perlindungan personel.`,
-};

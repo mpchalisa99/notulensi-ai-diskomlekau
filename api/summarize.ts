@@ -64,6 +64,7 @@ const REPORT_RESPONSE_SCHEMA = {
 };
 
 const SYSTEM_INSTRUCTION = `Anda adalah Sistem AI Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara) yang menyusun Laporan Pelaksanaan Kegiatan / Notulensi Rapat secara OTOMATIS.
+Gunakan HANYA informasi aktual dari rekaman audio dan foto (OCR Undangan / Materi Paparan) pada sesi saat ini. Jangan mengarang judul kegiatan atau nama pejabat dari sesi sebelumnya.
 
 Susun \`isiKegiatan\` / \`isiKegiatanDraft\` tepat dalam 4 poin bernomor (pisahkan antar poin dengan 1 baris kosong):
 1. Dasar / Latar Belakang: ...
@@ -119,7 +120,6 @@ export default async function handler(req: any, res: any) {
       overrideCategory,
       paparanKnowledge = [],
       metadata,
-      currentIsiKegiatan = '',
       chunkIndex = 0,
       totalChunks = 1,
       previousSummaries = [],
@@ -183,7 +183,11 @@ export default async function handler(req: any, res: any) {
 
     if (mode === 'autonomous_vision') {
       const img = parseDataUrlImage(imageDataUrl || '');
-      const prompt = `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : 'Otomatis'}). Ekstrak metadata jika surat undangan, atau ekstrak materi bahasan jika slide paparan. Konteks: ${currentIsiKegiatan}. Glossary: ${glossaryHint}`;
+      const slideContextStr =
+        Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
+          ? `\nMateri Slide Sesi Ini Sebelumnya: ${paparanKnowledge.join(' | ')}`
+          : '';
+      const prompt = `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : 'Otomatis'}). Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini.${slideContextStr} Glossary: ${glossaryHint}`;
       const response = await invokeModel(
         {
           parts: [{ inlineData: { mimeType: img.mimeType, data: img.data } }, { text: prompt }],
@@ -198,9 +202,9 @@ export default async function handler(req: any, res: any) {
     if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
       const slideContextStr =
         Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-          ? `\nMateri Slide Paparan:\n${paparanKnowledge.join('\n')}`
+          ? `\nMateri Slide Paparan Sesi Ini:\n${paparanKnowledge.join('\n')}`
           : '';
-      const prompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman berikut beserta materi slide paparan menjadi satu Laporan Notulensi utuh:\n\n${JSON.stringify(previousSummaries)}${slideContextStr}`;
+      const prompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan sesi ini menjadi satu Laporan Notulensi utuh:\n\n${JSON.stringify(previousSummaries)}${slideContextStr}`;
       const response = await invokeModel(prompt, REPORT_RESPONSE_SCHEMA);
       return res.status(200).json(JSON.parse((response.text ?? '{}').trim()));
     }
@@ -232,11 +236,11 @@ export default async function handler(req: any, res: any) {
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nIntegrasikan pula poin Materi Paparan berikut: ${paparanKnowledge.join(' | ')}`
+        ? `\nIntegrasikan pula poin Materi Paparan sesi ini: ${paparanKnowledge.join(' | ')}`
         : '';
 
     parts.push({
-      text: `Ekstrak otomatis judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan (4 poin), executiveSummary, actionItems, dan cleanTranscript dari suara dan materi rapat ini. Bagian ${chunkIndex + 1}/${totalChunks}. Glossary: ${glossaryHint}${slideContextStr}`,
+      text: `Ekstrak otomatis judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan (4 poin), executiveSummary, actionItems, dan cleanTranscript HANYA dari suara dan materi rapat sesi ini. Bagian ${chunkIndex + 1}/${totalChunks}. Glossary: ${glossaryHint}${slideContextStr}`,
     });
 
     const response = await invokeModel({ parts }, REPORT_RESPONSE_SCHEMA);

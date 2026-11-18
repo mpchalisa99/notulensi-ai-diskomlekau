@@ -1,15 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Camera,
   ScanText,
   Cpu,
   FileCheck2,
-  Video,
-  VideoOff,
   Loader2,
-  Upload,
   RefreshCw,
   Trash2,
+  X,
+  SwitchCamera,
+  Image as ImageIcon,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import type {
   CapturedPhotoItem,
@@ -17,28 +19,32 @@ import type {
   VisionCategory,
 } from '../types';
 
-interface TacticalCameraPreviewProps {
+interface FullscreenCameraModalProps {
+  isOpen: boolean;
+  onClose: () => void;
   metadata: MeetingMetadata;
-  selectedPhoto: CapturedPhotoItem | null;
+  capturedCount: number;
   onAutonomousPhotoCapture: (rawDataUrls: string[]) => void;
 }
 
-export const TacticalCameraPreview: React.FC<TacticalCameraPreviewProps> = ({
+export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
+  isOpen,
+  onClose,
   metadata,
-  selectedPhoto,
+  capturedCount,
   onAutonomousPhotoCapture,
 }) => {
-  const [isCameraLive, setIsCameraLive] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [isStartingCamera, setIsStartingCamera] = useState(false);
   const [shutterFlash, setShutterFlash] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [lastSnapFeedback, setLastSnapFeedback] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fallbackCameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  const stopCameraStream = () => {
+  const stopCameraStream = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -46,105 +52,98 @@ export const TacticalCameraPreview: React.FC<TacticalCameraPreviewProps> = ({
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    setIsCameraLive(false);
-  };
+  }, []);
 
-  const snapFrameFromVideo = (): boolean => {
-    const videoEl = videoRef.current;
-    if (!videoEl || videoEl.videoWidth === 0 || videoEl.videoHeight === 0) {
-      return false;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = videoEl.videoWidth;
-    canvas.height = videoEl.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return false;
+  const startCameraStream = useCallback(
+    async (mode: 'environment' | 'user') => {
+      stopCameraStream();
+      setCameraError(null);
+      setIsStartingCamera(true);
 
-    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.86);
-
-    setShutterFlash(true);
-    setTimeout(() => setShutterFlash(false), 180);
-
-    onAutonomousPhotoCapture([dataUrl]);
-    return true;
-  };
-
-  const startLiveCamera = async (snapAfterOpen: boolean = false) => {
-    setCameraError(null);
-    setIsStartingCamera(true);
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Browser tidak mendukung akses kamera langsung.');
-      }
-
-      let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Browser tidak mendukung live camera stream.');
+        }
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: mode },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            audio: false,
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
       } catch {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
+        setCameraError(
+          'Akses kamera langsung dibatasi oleh perangkat. Gunakan tombol Jepret Foto untuk membuka kamera sistem.'
+        );
+      } finally {
+        setIsStartingCamera(false);
       }
-
-      streamRef.current = stream;
-      const videoEl = videoRef.current;
-      if (videoEl) {
-        videoEl.srcObject = stream;
-        await videoEl.play().catch(() => {});
-      }
-      setIsCameraLive(true);
-
-      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
-        setIsCameraLive(false);
-      });
-
-      if (snapAfterOpen && videoEl) {
-        setTimeout(() => {
-          snapFrameFromVideo();
-        }, 450);
-      }
-    } catch {
-      setCameraError('Membuka akses kamera perangkat langsung...');
-      cameraInputRef.current?.click();
-    } finally {
-      setIsStartingCamera(false);
-    }
-  };
+    },
+    [stopCameraStream]
+  );
 
   useEffect(() => {
-    startLiveCamera(false);
+    if (isOpen) {
+      startCameraStream(facingMode);
+    } else {
+      stopCameraStream();
+    }
     return () => {
       stopCameraStream();
     };
-  }, []);
+  }, [isOpen, facingMode, startCameraStream, stopCameraStream]);
 
-  const toggleLiveCamera = async () => {
-    setCameraError(null);
-    if (isCameraLive) {
-      stopCameraStream();
-      return;
-    }
-    await startLiveCamera(false);
+  const handleSwitchCamera = () => {
+    setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
-  const handleAmbilFotoClick = async () => {
-    setCameraError(null);
-    if (isCameraLive && snapFrameFromVideo()) {
-      return;
+  const handleJepretFoto = () => {
+    const videoEl = videoRef.current;
+    if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoEl.videoWidth;
+      canvas.height = videoEl.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        if (facingMode === 'user') {
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+
+        setShutterFlash(true);
+        setTimeout(() => setShutterFlash(false), 180);
+
+        setLastSnapFeedback('Foto berhasil dijepret & dikirim ke AI Vision Router!');
+        setTimeout(() => setLastSnapFeedback(null), 2200);
+
+        onAutonomousPhotoCapture([dataUrl]);
+        return;
+      }
     }
-    await startLiveCamera(true);
+
+    // Fallback to native hardware camera input if video stream is unavailable
+    fallbackCameraInputRef.current?.click();
   };
 
-  const handleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFallbackFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
@@ -155,9 +154,8 @@ export const TacticalCameraPreview: React.FC<TacticalCameraPreviewProps> = ({
       promises.push(
         new Promise<string>((resolve) => {
           const reader = new FileReader();
-          reader.onload = () => {
+          reader.onload = () =>
             resolve(typeof reader.result === 'string' ? reader.result : '');
-          };
           reader.readAsDataURL(file);
         })
       );
@@ -167,172 +165,166 @@ export const TacticalCameraPreview: React.FC<TacticalCameraPreviewProps> = ({
       const valid = urls.filter(Boolean);
       if (valid.length > 0) {
         onAutonomousPhotoCapture(valid);
+        onClose();
       }
     });
 
     e.target.value = '';
   };
 
+  if (!isOpen) return null;
+
   const watermarkBannerText = `${(
-    metadata.judulKegiatan || 'RAPAT OPS KOMUNIKASI'
-  ).toUpperCase()} - ${(metadata.hariTanggal || '17 NOVEMBER 2026').toUpperCase()}`;
+    metadata.judulKegiatan?.trim() || 'KEGIATAN RAPAT DISKOMLEKAU'
+  ).toUpperCase()} - ${(metadata.hariTanggal?.trim() || '-').toUpperCase()}`;
 
   return (
-    <div className="space-y-1">
-      {/* Direct Hardware Camera Input */}
+    <div className="fixed inset-0 z-50 w-screen h-screen bg-black overflow-hidden select-none">
       <input
-        ref={cameraInputRef}
+        ref={fallbackCameraInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
-        onChange={handleFilesSelected}
-        className="hidden"
-      />
-      {/* Multi-Image Upload Input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        onChange={handleFilesSelected}
+        capture={facingMode}
+        onChange={handleFallbackFileChange}
         className="hidden"
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-1 px-0.5">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-bold tracking-wider text-slate-300 uppercase">
-            ACTIVE CAMERA PREVIEW
-          </span>
-          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#38BDF8]/15 text-[#38BDF8] border border-[#38BDF8]/40">
-            AUTONOMOUS AI ROUTER
-          </span>
-        </div>
+      {/* 100% Fullscreen Live Camera Viewfinder with object-cover scaling */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        autoPlay
+        className={`w-full h-full object-cover ${
+          facingMode === 'user' ? 'scale-x-[-1]' : ''
+        }`}
+      />
 
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={toggleLiveCamera}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors cursor-pointer ${
-              isCameraLive
-                ? 'bg-[#10B981]/20 text-[#10B981] border-[#10B981]/60'
-                : 'bg-[#111827] text-slate-300 border-slate-700 hover:text-white'
-            }`}
-            title="Aktifkan/Matikan Live WebRTC Camera"
-          >
-            {isCameraLive ? (
-              <>
-                <VideoOff className="w-3 h-3 text-[#10B981]" />
-                <span>Live Cam On</span>
-              </>
-            ) : (
-              <>
-                <Video className="w-3 h-3 text-[#38BDF8]" />
-                <span>Live Cam</span>
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-[#111827] text-slate-300 border border-slate-700 hover:text-white cursor-pointer"
-            title="Unggah satu atau banyak foto (AI otomatis mengklasifikasikan OCR / Paparan / Lampiran)"
-          >
-            <Upload className="w-2.5 h-2.5 text-[#F59E0B]" />
-            <span>Multi-Foto</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Camera Viewport Box with Tactical Brackets, Watermark & AMBIL FOTO button */}
-      <div className="relative w-full h-40 sm:h-48 rounded-xl overflow-hidden bg-[#111827] border border-[#1E293B] shadow-lg select-none">
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          className={`w-full h-full object-cover ${isCameraLive ? 'block' : 'hidden'}`}
-        />
-
-        {!isCameraLive && selectedPhoto && (
-          <img
-            src={selectedPhoto.displayDataUrl}
-            alt={selectedPhoto.category}
-            className="w-full h-full object-cover"
-          />
-        )}
-
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0B1120]/95 via-[#0B1120]/60 to-transparent" />
-
-        {/* 4 Tactical Amber Corner Brackets */}
-        <div className="pointer-events-none absolute top-2.5 left-2.5 w-6 h-6 border-t-2 border-l-2 border-[#F59E0B]/90 rounded-tl-sm" />
-        <div className="pointer-events-none absolute top-2.5 right-2.5 w-6 h-6 border-t-2 border-r-2 border-[#F59E0B]/90 rounded-tr-sm" />
-        <div className="pointer-events-none absolute bottom-2.5 left-2.5 w-6 h-6 border-b-2 border-l-2 border-[#F59E0B]/40 rounded-bl-sm" />
-        <div className="pointer-events-none absolute bottom-2.5 right-2.5 w-6 h-6 border-b-2 border-r-2 border-[#F59E0B]/40 rounded-br-sm" />
-
-        {/* Top-left autonomous router info badge */}
-        <div className="absolute top-3 left-4 right-4 flex items-center justify-between pointer-events-none">
-          <span className="bg-[#0B1120]/85 backdrop-blur-xs border border-slate-700 text-[9px] sm:text-[10px] font-mono text-slate-200 px-2 py-0.5 rounded truncate">
-            ZERO-FRICTION AI: AUTO-DETEKSI UNDANGAN (OCR) &bull; PAPARAN &bull; LAMPIRAN
-          </span>
-        </div>
-
-        {/* Bottom-Left Tactical Watermark Text & Bottom-Right AMBIL FOTO Button */}
-        <div className="absolute inset-x-3 bottom-2.5 flex items-end justify-between gap-2">
-          <div className="min-w-0 flex-1 pr-1">
-            <p className="text-[11px] sm:text-xs font-extrabold tracking-wide text-[#F59E0B] drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)] truncate uppercase">
-              {watermarkBannerText}
-            </p>
-            <p className="text-[9px] font-mono text-slate-300/90 truncate">
-              AEGIS-BRIEF DISKOMLEKAU &bull; EXIF STRIPPED &bull;{' '}
-              {selectedPhoto?.confidenceReason || 'SIAP POTRET OTOMATIS'}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleAmbilFotoClick}
-            disabled={isStartingCamera}
-            className={`shrink-0 flex flex-col items-center justify-center px-3 py-1.5 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border border-amber-300/80 text-slate-950 font-extrabold shadow-lg transition-all cursor-pointer disabled:opacity-50 ${
-              shutterFlash ? 'ring-4 ring-white brightness-125' : ''
-            }`}
-            title="Potret langsung — AI otomatis mendeteksi Undangan (OCR), Slide Paparan, atau Lampiran Kegiatan"
-          >
-            {isStartingCamera ? (
-              <Loader2 className="w-5 h-5 text-slate-950 animate-spin" />
-            ) : (
-              <Camera className="w-5 h-5 stroke-[2.2] text-slate-950" />
-            )}
-            <span className="text-[9px] tracking-wider uppercase mt-0.5 text-white drop-shadow-xs">
-              {isStartingCamera ? 'BUKA CAM...' : 'AMBIL FOTO'}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {cameraError && (
-        <p className="text-[10px] text-[#F59E0B] px-1">{cameraError}</p>
+      {/* Shutter Flash Effect */}
+      {shutterFlash && (
+        <div className="pointer-events-none absolute inset-0 bg-white/80 transition-opacity" />
       )}
+
+      {/* Tactical HUD Corner Reticles */}
+      <div className="pointer-events-none absolute top-5 left-5 w-8 h-8 border-t-2 border-l-2 border-[#F59E0B]/85 rounded-tl" />
+      <div className="pointer-events-none absolute top-5 right-5 w-8 h-8 border-t-2 border-r-2 border-[#F59E0B]/85 rounded-tr" />
+      <div className="pointer-events-none absolute bottom-32 left-5 w-8 h-8 border-b-2 border-l-2 border-[#F59E0B]/85 rounded-bl" />
+      <div className="pointer-events-none absolute bottom-32 right-5 w-8 h-8 border-b-2 border-r-2 border-[#F59E0B]/85 rounded-br" />
+
+      {/* Top HUD Status Bar */}
+      <div className="absolute top-6 inset-x-6 flex items-center justify-between gap-2 pointer-events-none">
+        <div className="inline-flex items-center gap-2 bg-[#0B1120]/85 backdrop-blur-md border border-slate-700/80 rounded-lg px-3 py-1.5">
+          <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
+          <span className="text-[11px] font-mono font-bold text-slate-100 uppercase tracking-wider">
+            AEGIS-BRIEF VISION CAM ({facingMode === 'environment' ? 'REAR' : 'FRONT'})
+          </span>
+        </div>
+
+        <div className="bg-[#0B1120]/85 backdrop-blur-md border border-[#38BDF8]/50 rounded-lg px-3 py-1.5 text-[11px] font-mono text-[#38BDF8]">
+          {capturedCount} Foto Sesi Ini
+        </div>
+      </div>
+
+      {/* Center Status / Feedback Toast */}
+      {(isStartingCamera || cameraError || lastSnapFeedback) && (
+        <div className="absolute top-20 inset-x-6 flex justify-center pointer-events-none">
+          {isStartingCamera && (
+            <div className="inline-flex items-center gap-2 bg-[#0B1120]/90 border border-slate-700 rounded-lg px-4 py-2 text-xs text-slate-200">
+              <Loader2 className="w-4 h-4 text-[#F59E0B] animate-spin" />
+              <span>Mengaktifkan sensor kamera...</span>
+            </div>
+          )}
+          {lastSnapFeedback && (
+            <div className="inline-flex items-center gap-2 bg-emerald-950/95 border border-[#10B981] rounded-lg px-4 py-2 text-xs font-bold text-emerald-200 shadow-lg">
+              <span>{lastSnapFeedback}</span>
+            </div>
+          )}
+          {cameraError && !isStartingCamera && (
+            <div className="bg-amber-950/90 border border-[#F59E0B] rounded-lg px-4 py-2 text-xs text-amber-200 text-center max-w-md">
+              {cameraError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bottom Floating Tactical Overlay Controls */}
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent pt-8 pb-6 px-5 flex flex-col items-center space-y-3">
+        {/* Subtle Live Watermark Preview Badge at Bottom Edge */}
+        <div className="w-full max-w-lg bg-[#0B1120]/85 backdrop-blur-xs border border-[#F59E0B]/50 rounded-lg px-3 py-1.5 text-center">
+          <p className="text-[10px] sm:text-xs font-extrabold tracking-wider text-[#F59E0B] uppercase truncate">
+            {watermarkBannerText}
+          </p>
+          <p className="text-[9px] font-mono text-slate-300 truncate">
+            AUTO-KLASIFIKASI AI: OCR UNDANGAN &bull; MATERI PAPARAN &bull; LAMPIRAN WATERMARK
+          </p>
+        </div>
+
+        {/* Bottom Control Row: Left TUTUP | Center JEPRET FOTO | Right FRONT/REAR */}
+        <div className="w-full max-w-lg flex items-center justify-between gap-4">
+          {/* Close/Back Button (TUTUP) on the Left */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-w-[88px] min-h-[46px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
+          >
+            <X className="w-4 h-4 text-red-400" />
+            <span>TUTUP</span>
+          </button>
+
+          {/* Large Tactile Shutter Button (JEPRET FOTO) in the Center */}
+          <button
+            type="button"
+            onClick={handleJepretFoto}
+            className="group relative flex flex-col items-center justify-center px-6 py-3 rounded-2xl bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border-2 border-white/90 text-slate-950 font-extrabold shadow-[0_0_25px_rgba(245,158,11,0.5)] transition-all cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <Camera className="w-6 h-6 stroke-[2.4] text-slate-950" />
+              <span className="text-xs sm:text-sm tracking-wider uppercase font-black">
+                JEPRET FOTO
+              </span>
+            </div>
+          </button>
+
+          {/* Switch Camera (Front/Rear) Button on the Right */}
+          <button
+            type="button"
+            onClick={handleSwitchCamera}
+            className="min-w-[88px] min-h-[46px] inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs uppercase tracking-wider shadow-lg cursor-pointer"
+            title="Ganti Kamera Depan / Belakang"
+          >
+            <SwitchCamera className="w-4 h-4 text-[#38BDF8]" />
+            <span>{facingMode === 'environment' ? 'REAR' : 'FRONT'}</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
 
-interface AutonomousDataCaptureTrayProps {
+interface CollapsibleDataCaptureTrayProps {
   photos: CapturedPhotoItem[];
   selectedPhotoId: string | null;
   onSelectPhoto: (id: string) => void;
   onCycleCategoryOverride: (id: string) => void;
   onRemovePhoto: (id: string) => void;
-  onAddPhotosClick: () => void;
+  onOpenFullscreenCamera: () => void;
+  onOpenGalleryPicker: () => void;
 }
 
-export const AutonomousDataCaptureTray: React.FC<AutonomousDataCaptureTrayProps> = ({
+export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProps> = ({
   photos,
   selectedPhotoId,
   onSelectPhoto,
   onCycleCategoryOverride,
   onRemovePhoto,
-  onAddPhotosClick,
+  onOpenFullscreenCamera,
+  onOpenGalleryPicker,
 }) => {
+  // Default: Collapsed state so it never blocks main workspace on mobile screens
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const analyzingCount = photos.filter((p) => p.status === 'analyzing').length;
+
   const getCategoryMeta = (cat: VisionCategory) => {
     switch (cat) {
       case 'OCR_UNDANGAN':
@@ -364,107 +356,163 @@ export const AutonomousDataCaptureTray: React.FC<AutonomousDataCaptureTrayProps>
   };
 
   return (
-    <section className="bg-[#111827] border border-[#1E293B] rounded-xl p-2.5 shadow-inner space-y-1.5">
-      <div className="flex items-center justify-between px-1">
-        <span className="text-[10px] font-mono text-slate-400">
-          {photos.length} TANGKAPAN
-        </span>
-        <h3 className="text-[11px] font-bold tracking-wider text-slate-200 uppercase text-center">
-          TANGKAPAN DATA &amp; LAMPIRAN
-        </h3>
+    <section className="bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-2 shadow-lg transition-all">
+      {/* Compact Folding Bar (Always Visible) */}
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={onAddPhotosClick}
-          className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#38BDF8] hover:text-sky-300 cursor-pointer"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="flex-1 inline-flex items-center gap-1.5 text-left py-1 px-2 rounded-lg bg-[#0B1120] hover:bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-100 transition-colors cursor-pointer"
         >
-          <Camera className="w-3 h-3" />
-          <span>+ Foto</span>
-        </button>
-      </div>
-
-      {/* Horizontal / 4-column Gallery Tray */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-        {photos.map((photo) => {
-          const isSelected = selectedPhotoId === photo.id;
-          const isAnalyzing = photo.status === 'analyzing';
-          const meta = getCategoryMeta(photo.category);
-
-          return (
-            <div
-              key={photo.id}
-              onClick={() => onSelectPhoto(photo.id)}
-              className="flex flex-col items-center cursor-pointer group"
-            >
-              <div
-                className={`relative w-full aspect-[16/11] rounded-lg overflow-hidden bg-[#0B1120] transition-all border-2 ${
-                  isSelected ? meta.borderSelected : 'border-slate-700/80 hover:border-slate-500'
-                }`}
-              >
-                <img
-                  src={photo.displayDataUrl}
-                  alt={meta.badgeLabel}
-                  className="w-full h-full object-cover"
-                />
-
-                {/* Top-Left Category Badge (Sky Blue / Amber Gold / Emerald Green) */}
-                <div
-                  className={`absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[7px] font-extrabold tracking-wider uppercase shadow ${meta.badgeClass}`}
-                >
-                  {isAnalyzing ? (
-                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                  ) : (
-                    meta.icon
-                  )}
-                  <span>{isAnalyzing ? 'KLASIFIKASI AI...' : meta.badgeLabel}</span>
-                </div>
-
-                {/* Top-Right Manual Override Toggle & Remove Controls */}
-                <div className="absolute top-1 right-1 flex items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCycleCategoryOverride(photo.id);
-                    }}
-                    className="bg-slate-950/85 hover:bg-slate-800 text-slate-200 border border-slate-600 rounded p-0.5 transition-colors cursor-pointer"
-                    title="Ubah Klasifikasi Kategori Manual (OCR Undangan / Materi Paparan / Lampiran)"
-                  >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemovePhoto(photo.id);
-                    }}
-                    className="bg-slate-950/85 hover:bg-red-900/90 text-slate-300 hover:text-white border border-slate-600 rounded p-0.5 transition-colors cursor-pointer"
-                    title="Hapus Foto"
-                  >
-                    <Trash2 className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-
-                {/* Bottom Micro-Summary Strip */}
-                <div className="absolute inset-x-0 bottom-0 bg-[#0B1120]/90 border-t border-slate-800 px-1 py-0.5">
-                  <p className="text-[7px] font-mono text-slate-300 truncate leading-tight uppercase">
-                    {isAnalyzing
-                      ? 'VISION ROUTER MEMINDAI...'
-                      : photo.extractedText || photo.confidenceReason || photo.capturedAt}
-                  </p>
-                </div>
-              </div>
-
-              <span
-                className={`mt-1 text-[9px] sm:text-[10px] font-bold tracking-tight text-center leading-tight uppercase ${
-                  isSelected ? 'text-[#F59E0B]' : 'text-slate-300 group-hover:text-white'
-                }`}
-              >
-                {meta.shortLabel}
+          {isExpanded ? (
+            <>
+              <ChevronDown className="w-4 h-4 text-[#F59E0B] shrink-0" />
+              <span className="truncate">
+                ▼ Lipat / Sembunyikan ({photos.length})
               </span>
-            </div>
-          );
-        })}
+            </>
+          ) : (
+            <>
+              <ChevronUp className="w-4 h-4 text-[#38BDF8] shrink-0" />
+              <span className="truncate">
+                ▲ Tangkapan Foto &amp; OCR ({photos.length})
+              </span>
+            </>
+          )}
+          {analyzingCount > 0 && (
+            <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-mono text-[#F59E0B]">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              AI...
+            </span>
+          )}
+        </button>
+
+        {/* Quick-Action Buttons: 📷 Kamera & 🖼️ Galeri */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenFullscreenCamera}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 border border-amber-300/70 text-slate-950 font-extrabold text-xs shadow cursor-pointer"
+            title="Buka Kamera Fullscreen (Ambil Foto)"
+          >
+            <Camera className="w-3.5 h-3.5 stroke-[2.3]" />
+            <span>Kamera</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenGalleryPicker}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1E293B] hover:bg-slate-700 active:scale-95 border border-slate-600 text-slate-100 font-bold text-xs shadow cursor-pointer"
+            title="Pilih Foto dari Galeri (Otomatis Klasifikasi OCR / Paparan / Lampiran)"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-[#38BDF8]" />
+            <span>Galeri</span>
+          </button>
+        </div>
       </div>
+
+      {/* Expanded Horizontal Thumbnail Strip */}
+      {isExpanded && (
+        <div className="mt-2.5 pt-2.5 border-t border-slate-800">
+          {photos.length === 0 ? (
+            <div className="py-4 text-center text-xs text-slate-400 font-mono">
+              Belum ada tangkapan foto pada sesi ini. Tekan tombol{' '}
+              <span className="text-[#F59E0B] font-bold">Kamera</span> atau{' '}
+              <span className="text-[#38BDF8] font-bold">Galeri</span> untuk memindai
+              Undangan (OCR), Slide Paparan, atau Lampiran Dokumentasi.
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+              {photos.map((photo) => {
+                const isSelected = selectedPhotoId === photo.id;
+                const isAnalyzing = photo.status === 'analyzing';
+                const meta = getCategoryMeta(photo.category);
+
+                return (
+                  <div
+                    key={photo.id}
+                    onClick={() => onSelectPhoto(photo.id)}
+                    className="shrink-0 w-36 sm:w-40 flex flex-col items-center cursor-pointer group"
+                  >
+                    <div
+                      className={`relative w-full aspect-[16/10] rounded-lg overflow-hidden bg-[#0B1120] transition-all border-2 ${
+                        isSelected
+                          ? meta.borderSelected
+                          : 'border-slate-700/80 hover:border-slate-500'
+                      }`}
+                    >
+                      <img
+                        src={photo.displayDataUrl}
+                        alt={meta.badgeLabel}
+                        className="w-full h-full object-cover"
+                      />
+
+                      {/* Category Badge */}
+                      <div
+                        className={`absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-extrabold tracking-wider uppercase shadow ${meta.badgeClass}`}
+                      >
+                        {isAnalyzing ? (
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        ) : (
+                          meta.icon
+                        )}
+                        <span>{isAnalyzing ? 'AI...' : meta.badgeLabel}</span>
+                      </div>
+
+                      {/* Manual Override & Delete Buttons */}
+                      <div className="absolute top-1 right-1 flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCycleCategoryOverride(photo.id);
+                          }}
+                          className="bg-slate-950/85 hover:bg-slate-800 text-slate-200 border border-slate-600 rounded p-1 transition-colors cursor-pointer"
+                          title="Ubah Kategori Manual (OCR Undangan / Materi Paparan / Lampiran)"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRemovePhoto(photo.id);
+                          }}
+                          className="bg-slate-950/85 hover:bg-red-900/90 text-slate-300 hover:text-white border border-slate-600 rounded p-1 transition-colors cursor-pointer"
+                          title="Hapus Foto"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+
+                      {/* Micro-Summary Strip */}
+                      <div className="absolute inset-x-0 bottom-0 bg-[#0B1120]/90 border-t border-slate-800 px-1.5 py-0.5">
+                        <p className="text-[8px] font-mono text-slate-300 truncate leading-tight uppercase">
+                          {isAnalyzing
+                            ? 'MEMINDAI...'
+                            : photo.extractedText ||
+                              photo.confidenceReason ||
+                              photo.capturedAt}
+                        </p>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`mt-1 text-[9px] font-bold tracking-tight text-center leading-tight uppercase ${
+                        isSelected
+                          ? 'text-[#F59E0B]'
+                          : 'text-slate-300 group-hover:text-white'
+                      }`}
+                    >
+                      {meta.shortLabel}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 };

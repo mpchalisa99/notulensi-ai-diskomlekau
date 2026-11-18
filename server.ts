@@ -45,37 +45,37 @@ const VISION_ROUTER_SCHEMA = {
     },
     judulKegiatan: {
       type: Type.STRING,
-      description: 'Judul kegiatan/rapat jika terdeteksi dari surat undangan atau slide.',
+      description: 'Judul kegiatan/rapat yang tertulis pada surat undangan atau slide. Kosongkan ("") jika tidak ada.',
     },
     hariTanggal: {
       type: Type.STRING,
-      description: 'Hari dan tanggal pelaksanaan jika terdeteksi pada surat undangan/slide.',
+      description: 'Hari dan tanggal pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pukul: {
       type: Type.STRING,
-      description: 'Waktu/jam pelaksanaan jika terdeteksi pada surat undangan/slide.',
+      description: 'Waktu/jam pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     tempat: {
       type: Type.STRING,
-      description: 'Tempat pelaksanaan rapat jika terdeteksi pada surat undangan/slide.',
+      description: 'Tempat pelaksanaan rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pimpinanRapat: {
       type: Type.STRING,
-      description: 'Nama/jabatan Pimpinan Rapat jika terdeteksi pada surat undangan/slide.',
+      description: 'Nama/jabatan Pimpinan Rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pesertaRapat: {
       type: Type.STRING,
-      description: 'Daftar peserta rapat/undangan jika terdeteksi pada surat undangan/daftar hadir.',
+      description: 'Daftar peserta rapat/undangan yang tertulis pada surat undangan/daftar hadir. Kosongkan ("") jika tidak ada.',
     },
     extractedKnowledge: {
       type: Type.STRING,
       description:
-        'Poin-poin inti materi, spesifikasi teknis, angka, atau isi surat yang berhasil diekstrak dari foto.',
+        'Poin-poin inti materi, spesifikasi teknis, angka, atau isi surat yang berhasil diekstrak langsung dari foto ini.',
     },
     isiKegiatanDraft: {
       type: Type.STRING,
       description:
-        'Draf isi kegiatan 4 poin bernomor (1. Dasar / Latar Belakang: ..., 2. Jalannya Rapat / Pokok Pembahasan: ..., 3. Hasil Rapat : ..., 4. Kesimpulan: ...) yang mengintegrasikan materi dari foto ini.',
+        'Draf isi kegiatan 4 poin bernomor (1. Dasar / Latar Belakang: ..., 2. Jalannya Rapat / Pokok Pembahasan: ..., 3. Hasil Rapat : ..., 4. Kesimpulan: ...) yang HANYA berisi materi dari sesi ini.',
     },
   },
   required: ['category', 'confidenceReason', 'extractedKnowledge', 'isiKegiatanDraft'],
@@ -87,32 +87,32 @@ const REPORT_RESPONSE_SCHEMA = {
     judulKegiatan: {
       type: Type.STRING,
       description:
-        'Judul kegiatan atau topik utama rapat yang terdeteksi dari undangan, rekaman suara, atau tangkapan layar/paparan.',
+        'Judul kegiatan atau topik utama rapat yang terdeteksi langsung dari rekaman suara atau foto sesi ini.',
     },
     hariTanggal: {
       type: Type.STRING,
       description:
-        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia (contoh: Selasa, 17 November 2026).',
+        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia jika disebutkan.',
     },
     pukul: {
       type: Type.STRING,
       description:
-        'Waktu/jam pelaksanaan rapat (contoh: 20.00 WIB s.d. selesai atau 09.00 WIB).',
+        'Waktu/jam pelaksanaan rapat jika disebutkan.',
     },
     pimpinanRapat: {
       type: Type.STRING,
       description:
-        'Nama atau jabatan Pimpinan Rapat yang terdeteksi dari surat undangan, pembicaraan suara, atau layar Zoom.',
+        'Nama atau jabatan Pimpinan Rapat yang terdeteksi dari rekaman suara atau layar sesi ini.',
     },
     pesertaRapat: {
       type: Type.STRING,
       description:
-        'Daftar peserta rapat atau satuan yang diundang/hadir.',
+        'Daftar peserta rapat atau satuan yang hadir dalam sesi ini.',
     },
     tempat: {
       type: Type.STRING,
       description:
-        'Tempat pelaksanaan rapat yang terdeteksi dari undangan/layar/suara.',
+        'Tempat pelaksanaan rapat yang terdeteksi dalam sesi ini.',
     },
     isiKegiatan: {
       type: Type.STRING,
@@ -122,11 +122,11 @@ const REPORT_RESPONSE_SCHEMA = {
     executiveSummary: {
       type: Type.STRING,
       description:
-        'Ringkasan eksekutif singkat 3 kalimat padat dan jelas yang merangkum hasil rapat atau materi paparan.',
+        'Ringkasan eksekutif singkat 3 kalimat padat dan jelas yang merangkum hasil rapat sesi ini.',
     },
     actionItems: {
       type: Type.ARRAY,
-      description: 'Daftar tindak lanjut (Action Items) yang disepakati dalam rapat.',
+      description: 'Daftar tindak lanjut (Action Items) yang disepakati dalam rapat sesi ini.',
       items: {
         type: Type.OBJECT,
         properties: {
@@ -149,7 +149,7 @@ const REPORT_RESPONSE_SCHEMA = {
     cleanTranscript: {
       type: Type.STRING,
       description:
-        'Transkrip percakapan kronologis atau teks hasil pembacaan OCR/Paparan.',
+        'Transkrip percakapan kronologis atau teks hasil pembacaan OCR/Paparan dari sesi ini.',
     },
   },
   required: [
@@ -166,20 +166,16 @@ const REPORT_RESPONSE_SCHEMA = {
 
 const SYSTEM_INSTRUCTION = `Anda adalah Sistem AI Taktis AEGIS-BRIEF DISKOMLEKAU (Perwira Staf Ahli / Notulis Eksekutif Militer TNI Angkatan Udara) yang menyusun Laporan Pelaksanaan Kegiatan / Notulensi Rapat secara OTOMATIS.
 
-LOGIKA EKSTRAKSI & PENYUSUNAN LAPORAN (WAJIB):
-1. \`judulKegiatan\`: Ekstrak judul kegiatan/rapat tanpa kata "kegiatan" di depannya (contoh: "Rapat Uji Fungsi Pengadaan Armor Personel Carrier").
-2. \`hariTanggal\`: Hari dan tanggal rapat dalam Bahasa Indonesia (contoh: "Selasa, 17 November 2026").
-3. \`pukul\`: Jam pelaksanaan rapat (contoh: "20.00 WIB s.d. selesai").
-4. \`pimpinanRapat\`: Pangkat, nama, atau jabatan Pimpinan Rapat (contoh: "Kolonel Lek Budi, ST, MH" atau "Kadiskomlekau").
-5. \`pesertaRapat\`: Daftar pejabat/satuan/instansi peserta rapat, dipisahkan dengan koma.
-6. \`tempat\`: Lokasi pelaksanaan rapat (contoh: "Posko Utama Diskomlekau" atau "Vicon Zoom Meeting").
-7. \`isiKegiatan\` / \`isiKegiatanDraft\`: WAJIB disusun dalam 4 poin bernomor dengan format paragraf langsung setelah titik dua (pisahkan antar poin dengan 1 baris kosong):
+ATURAN SINKRONISASI KETAT (ANTI-DATA LAMA):
+- Gunakan HANYA informasi aktual yang berasal dari rekaman audio dan foto (OCR Undangan / Materi Paparan) pada permintaan sesi saat ini.
+- JANGAN PERNAH mengarang judul kegiatan atau nama pejabat fiktif di luar data input yang diberikan.
+- Susun \`isiKegiatan\` / \`isiKegiatanDraft\` dalam 4 poin bernomor dengan format paragraf langsung setelah titik dua (pisahkan antar poin dengan 1 baris kosong):
 
-1. Dasar / Latar Belakang: [uraikan latar belakang/dasar surat undangan/tujuan pelaksanaan kegiatan].
+1. Dasar / Latar Belakang: [uraikan latar belakang/dasar surat undangan/tujuan pelaksanaan kegiatan dari data sesi ini].
 
-2. Jalannya Rapat / Pokok Pembahasan: [uraikan secara komprehensif arahan pimpinan rapat serta pokok-pokok materi dari slide paparan dan diskusi].
+2. Jalannya Rapat / Pokok Pembahasan: [uraikan secara komprehensif arahan pimpinan rapat serta pokok-pokok materi dari slide paparan dan diskusi sesi ini].
 
-3. Hasil Rapat : [uraikan komitmen, kesepakatan teknis, atau hasil utama yang dicapai].
+3. Hasil Rapat : [uraikan komitmen, kesepakatan teknis, atau hasil utama yang dicapai pada sesi ini].
 
 4. Kesimpulan: [uraikan kesimpulan akhir pelaksanaan kegiatan serta penekanan/tindak lanjut yang wajib didokumentasikan].
 
@@ -301,7 +297,6 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       overrideCategory,
       paparanKnowledge = [],
       metadata,
-      currentIsiKegiatan = '',
       chunkIndex = 0,
       totalChunks = 1,
       previousSummaries = [],
@@ -314,7 +309,7 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       ? metadata.customGlossary.trim()
       : 'Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon';
 
-    // AUTONOMOUS MULTI-MODAL VISION ROUTER (Zero-Manual Photo Classification)
+    // AUTONOMOUS MULTI-MODAL VISION ROUTER
     if (mode === 'autonomous_vision') {
       if (!imageDataUrl || typeof imageDataUrl !== 'string') {
         res.status(400).end(JSON.stringify({ error: 'Data foto tidak ditemukan.' }));
@@ -326,17 +321,16 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
         ? `klasifikasikan wajib sebagai "${overrideCategory}" sesuai instruksi operator`
         : `klasifikasikan secara OTOMATIS ke dalam salah satu dari 3 kategori berikut:
 1. "OCR_UNDANGAN": Jika foto berupa surat undangan rapat, nota dinas, telegram, jadwal kegiatan, atau daftar hadir. Ekstrak otomatis judulKegiatan, hariTanggal, pukul, tempat, pimpinanRapat, dan pesertaRapat via OCR.
-2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh poin bahasan, spesifikasi teknis, dan angka ke dalam \`extractedKnowledge\` serta integrasikan ke \`isiKegiatanDraft\`.
+2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh poin bahasan, spesifikasi teknis, dan angka ke dalam \`extractedKnowledge\` serta susun \`isiKegiatanDraft\`.
 3. "DOKUMENTASI_KEGIATAN": Jika foto berupa situasi ruang rapat, personel di lapangan, atau kegiatan fisik.`;
 
-      const visionPrompt = `Analisis foto ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF DISKOMLEKAU, dan ${forcedCategoryInstruction}.
+      const slideKnowledgeStr =
+        Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
+          ? `\nPengetahuan Slide Paparan Sesi Ini Sebelumnya:\n${paparanKnowledge.join('\n')}`
+          : '';
 
-Konteks Rapat Saat Ini:
-- Judul: ${metadata?.judulKegiatan || '-'}
-- Pimpinan: ${metadata?.pimpinanRapat || '-'}
-- Draf Isi Kegiatan Saat Ini:
-${currentIsiKegiatan}
-
+      const visionPrompt = `Analisis foto baru ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF DISKOMLEKAU, dan ${forcedCategoryInstruction}.
+Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini.${slideKnowledgeStr}
 Glosarium Istilah: ${glossaryHint}`;
 
       const response = await callGeminiWithSchemaFallback(
@@ -366,15 +360,15 @@ Glosarium Istilah: ${glossaryHint}`;
       return;
     }
 
-    // SYNTHESIZE MULTIPLE AUDIO CHUNKS + MATERI_PAPARAN CONTEXT
+    // SYNTHESIZE MULTIPLE AUDIO CHUNKS + MATERI_PAPARAN CONTEXT OF CURRENT SESSION
     if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
       startHeartbeat();
       const slideContextStr =
         Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-          ? `\n\nKONTEKS MATERI PAPARAN / SLIDE PRESENTASI YANG TELAH DIPINDAI AI:\n${paparanKnowledge.join('\n---\n')}`
+          ? `\n\nKONTEKS MATERI PAPARAN / SLIDE PRESENTASI SESI INI:\n${paparanKnowledge.join('\n---\n')}`
           : '';
 
-      const combinedPrompt = `Gabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat berikut beserta konteks materi paparan menjadi SATU laporan notulensi utuh (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan 4 poin, executiveSummary, actionItems, dan cleanTranscript):
+      const combinedPrompt = `Gabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta konteks materi paparan sesi ini menjadi SATU laporan notulensi utuh (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan 4 poin, executiveSummary, actionItems, dan cleanTranscript):
 
 ${JSON.stringify(previousSummaries, null, 2)}${slideContextStr}
 
@@ -393,7 +387,7 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
       return;
     }
 
-    // SINGLE AUDIO CHUNK (+ MATERI_PAPARAN KNOWLEDGE & SCREEN FRAMES)
+    // SINGLE AUDIO CHUNK (+ CURRENT SESSION MATERI_PAPARAN KNOWLEDGE & SCREEN FRAMES)
     if (!audioBase64 || typeof audioBase64 !== 'string') {
       res.status(400).end(
         JSON.stringify({
@@ -431,11 +425,15 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN) yang wajib diintegrasikan ke dalam isiKegiatan:\n${paparanKnowledge.join('\n')}`
+        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN) pada sesi ini yang wajib diintegrasikan ke dalam isiKegiatan:\n${paparanKnowledge.join('\n')}`
         : '';
 
+    const currentTitleHint = metadata?.judulKegiatan?.trim()
+      ? `\nJudul Kegiatan Sesi Ini (dari Undangan/Input): ${metadata.judulKegiatan.trim()}`
+      : '';
+
     parts.push({
-      text: `Sintesis rekaman suara rapat ini bersama konteks layar/slide paparan untuk menghasilkan Laporan Pelaksanaan Kegiatan resmi Diskomlekau.
+      text: `Sintesis HANYA rekaman suara rapat sesi ini bersama konteks layar/slide paparan sesi ini untuk menghasilkan Laporan Pelaksanaan Kegiatan resmi Diskomlekau.${currentTitleHint}
 Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
 Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${slideContextStr}
 Hasilkan JSON lengkap sesuai skema.`,
