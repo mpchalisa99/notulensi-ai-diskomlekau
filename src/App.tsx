@@ -23,6 +23,7 @@ import {
   Lock,
   Loader2,
   ListChecks,
+  Settings,
 } from 'lucide-react';
 import type {
   AudioChunkItem,
@@ -55,7 +56,11 @@ import {
   removeAudioChunkFromVault,
   saveAudioChunkToVault,
   saveSessionDraftToArchive,
+  saveMeetingBundle,
+  loadAllMeetingBundles,
+  deleteMeetingBundle,
   type ArchivedSessionRecord,
+  type MeetingBundleRecord,
 } from './utils/audioVaultDb';
 import { WingCrestEmblem, KomlekOmegaEmblem } from './components/DiskomlekauEmblems';
 import { AudioRecorder } from './components/AudioRecorder';
@@ -73,6 +78,15 @@ const CATEGORY_CYCLE: VisionCategory[] = [
   'MATERI_PAPARAN',
   'DOKUMENTASI_KEGIATAN',
 ];
+
+export interface BackupAiSettings {
+  primaryProvider: 'gemini' | 'groq' | 'openai';
+  groqApiKey: string;
+  openaiApiKey: string;
+  priorityMode: 'automatic' | 'force_groq' | 'force_openai';
+}
+
+const STORAGE_BACKUP_SETTINGS_KEY = 'aegis_ai_backup_settings_v1';
 
 export default function App() {
   // Initialize with clean, non-stale session state bound to current system clock
@@ -107,6 +121,78 @@ export default function App() {
   const [apiSuccessBanner, setApiSuccessBanner] = useState<string | null>(null);
   const [copiedWA, setCopiedWA] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
+
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
+  const [savedMeetingBundles, setSavedMeetingBundles] = useState<MeetingBundleRecord[]>([]);
+  const [showSavedBundlesModal, setShowSavedBundlesModal] = useState(false);
+
+  const [backupSettings, setBackupSettings] = useState<BackupAiSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_BACKUP_SETTINGS_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      primaryProvider: 'gemini',
+      groqApiKey: '',
+      openaiApiKey: '',
+      priorityMode: 'automatic',
+    };
+  });
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_BACKUP_SETTINGS_KEY, JSON.stringify(backupSettings));
+    } catch {}
+  }, [backupSettings]);
+
+  useEffect(() => {
+    loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
+  }, []);
+
+  const handleRetryBundleAnalysis = async (bundle: MeetingBundleRecord) => {
+    setShowSavedBundlesModal(false);
+    setMetadata(bundle.metadata);
+    setCapturedPhotos(bundle.photos);
+    const rehydratedChunks: AudioChunkItem[] = bundle.chunks.map((c) => ({
+      id: c.id,
+      index: c.index,
+      blob: c.blob,
+      mimeType: c.mimeType,
+      timestampLabel: c.timestampLabel,
+      durationSec: c.durationSec,
+      sizeBytes: c.sizeBytes,
+      status: 'ready',
+    }));
+    setChunks(rehydratedChunks);
+    await handleProcessWithAI(rehydratedChunks);
+  };
+
+  const handleDownloadBundleFiles = async (bundle: MeetingBundleRecord) => {
+    try {
+      bundle.chunks.forEach((chunk, idx) => {
+        const url = URL.createObjectURL(chunk.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${bundle.metadata.judulKegiatan || 'rapat'}_audio_segmen_${idx + 1}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+      bundle.photos.forEach((photo, idx) => {
+        const a = document.createElement('a');
+        a.href = photo.displayDataUrl;
+        a.download = `${bundle.metadata.judulKegiatan || 'rapat'}_foto_${idx + 1}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      });
+      setApiSuccessBanner('Berhasil mengunduh seluruh file audio dan foto mentah dari rapat tersimpan.');
+    } catch (err: any) {
+      setApiError('Gagal mengunduh file rapat: ' + err?.message);
+    }
+  };
 
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const directLampiranInputRef = useRef<HTMLInputElement | null>(null);
@@ -398,6 +484,10 @@ export default function App() {
             mode: 'cross_modal_fusion',
             unifiedContext,
             metadata: activeMeta,
+            preferredModel: selectedModel,
+            groqApiKey: backupSettings.groqApiKey,
+            openaiApiKey: backupSettings.openaiApiKey,
+            priorityMode: backupSettings.priorityMode,
           }),
         });
 
@@ -487,6 +577,10 @@ export default function App() {
           overrideCategory,
           paparanKnowledge: currentSessionPaparan,
           metadata: currentMeta,
+          preferredModel: selectedModel,
+          groqApiKey: backupSettings.groqApiKey,
+          openaiApiKey: backupSettings.openaiApiKey,
+          priorityMode: backupSettings.priorityMode,
         }),
       });
 
@@ -805,8 +899,28 @@ export default function App() {
     setApiError(null);
     setApiSuccessBanner(null);
 
+    const currentMeta = metadataRef.current;
+    const meetingId = `meeting_${Date.now()}`;
+    const bundleRecord: MeetingBundleRecord = {
+      id: meetingId,
+      savedAt: new Date().toISOString(),
+      metadata: currentMeta,
+      chunks: targetChunks.map((c) => ({
+        id: c.id,
+        index: c.index,
+        blob: c.blob,
+        mimeType: c.mimeType,
+        timestampLabel: c.timestampLabel,
+        durationSec: c.durationSec,
+        sizeBytes: c.sizeBytes,
+      })),
+      photos: capturedPhotosRef.current,
+      status: 'analyzing',
+    };
+
     try {
-      const currentMeta = metadataRef.current;
+      await saveMeetingBundle(bundleRecord);
+      loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
 
       const currentSessionPaparanKnowledge = capturedPhotosRef.current
         .filter((p) => p.category === 'MATERI_PAPARAN' && p.extractedText)
@@ -872,6 +986,10 @@ export default function App() {
             metadata: currentMeta,
             chunkIndex: i,
             totalChunks: updatedChunksList.length,
+            preferredModel: selectedModel,
+            groqApiKey: backupSettings.groqApiKey,
+            openaiApiKey: backupSettings.openaiApiKey,
+            priorityMode: backupSettings.priorityMode,
           }),
         });
 
@@ -919,6 +1037,10 @@ export default function App() {
           mode: 'cross_modal_fusion',
           unifiedContext,
           metadata: metadataRef.current,
+          preferredModel: selectedModel,
+          groqApiKey: backupSettings.groqApiKey,
+          openaiApiKey: backupSettings.openaiApiKey,
+          priorityMode: backupSettings.priorityMode,
         }),
       });
 
@@ -926,6 +1048,11 @@ export default function App() {
         fusionResponse,
         'Cross-Modal Fusion'
       )) as MeetingReportResult;
+
+      bundleRecord.status = 'completed';
+      bundleRecord.report = finalResult;
+      await saveMeetingBundle(bundleRecord);
+      loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
 
       const now = new Date();
       const currentIso = getTodayIsoDate(now);
@@ -979,7 +1106,17 @@ export default function App() {
         } Pindaian Gambar telah disinkronkan!`
       );
     } catch (err: any) {
-      setApiError(err?.message || 'Gagal memproses rekaman rapat.');
+      const errorMsg = err?.message || '503 High Demand / Server AI Sibuk';
+      bundleRecord.status = 'failed_retryable';
+      bundleRecord.lastError = errorMsg;
+      try {
+        await saveMeetingBundle(bundleRecord);
+        loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
+      } catch {}
+
+      setApiError(
+        `Server AI mengalami lonjakan (503 / High Demand). Rapat telah tersimpan aman di Brankas Lokal (IndexedDB). Silakan buka menu "Rapat Tersimpan" untuk Coba Analisis Ulang atau ganti Model AI di atas.`
+      );
       setChunks((prev) =>
         prev.map((c) => (c.status === 'processing' ? { ...c, status: 'error' } : c))
       );
@@ -1244,6 +1381,15 @@ export default function App() {
           <div className="flex items-center gap-1.5 shrink-0">
             <KomlekOmegaEmblem className="hidden sm:block w-10 h-10" />
 
+            <button
+              type="button"
+              onClick={() => setShowSettingsModal(true)}
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-white border border-slate-700 cursor-pointer transition-all shadow"
+              title="Pengaturan API Cadangan (Groq / OpenAI Failover)"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+
             {/* Dedicated Tactical Red EXIT Button in Top-Right Header */}
             <button
               type="button"
@@ -1257,7 +1403,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Install App PWA + Open Fullscreen Camera) */}
+        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Model AI Dropdown + Rapat Tersimpan + Install App PWA + Open Fullscreen Camera) */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-1.5">
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
@@ -1268,6 +1414,34 @@ export default function App() {
             >
               <RotateCcw className="w-3.5 h-3.5 text-red-400" />
               <span>Sesi Baru / Reset</span>
+            </button>
+
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">Model AI:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-amber-300 font-bold outline-none cursor-pointer"
+                title="Pilih Model AI (Ganti model jika terjadi lonjakan 503 high demand)"
+              >
+                <option value="gemini-2.5-flash">gemini-2.5-flash (Default)</option>
+                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Ringan)</option>
+                <option value="gemini-2.0-flash">gemini-2.0-flash (Stabil)</option>
+                <option value="gemini-2.5-pro">gemini-2.5-pro (Mendalam)</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
+                setShowSavedBundlesModal(true);
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-sky-300 hover:text-white text-[11px] font-bold tracking-wide transition-all cursor-pointer"
+              title="Buka daftar rapat tersimpan di IndexedDB (Pemulihan darurat 503)"
+            >
+              <Archive className="w-3.5 h-3.5 text-sky-400" />
+              <span>Rapat Tersimpan ({savedMeetingBundles.length})</span>
             </button>
 
             <PWAInstallButton />
@@ -1666,6 +1840,225 @@ export default function App() {
           </button>
         </footer>
       </div>
+
+      {/* Saved Meeting Bundles Modal (IndexedDB Vault Recovery for 503 / High Demand) */}
+      {showSavedBundlesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-gradient-to-b from-[#162E4D] to-[#0B1120] border-2 border-sky-500/60 rounded-2xl p-4 sm:p-6 w-full max-w-lg shadow-2xl text-white max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-700/80 mb-3">
+              <div className="flex items-center gap-2">
+                <Archive className="w-5 h-5 text-sky-400" />
+                <h3 className="text-sm sm:text-base font-extrabold tracking-wider uppercase">
+                  Brankas Rapat Tersimpan (IndexedDB Vault)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSavedBundlesModal(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 mb-3">
+              Seluruh rekaman audio dan foto sesi rapat disimpan secara lokal di perangkat sebelum dikirim ke AI. Jika terjadi lonjakan 503 (High Demand), data tidak akan hilang dan dapat dianalisis ulang kapan saja.
+            </p>
+
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+              {savedMeetingBundles.length === 0 ? (
+                <div className="text-center py-10 text-slate-400 text-xs italic">
+                  Belum ada rapat tersimpan di brankas lokal.
+                </div>
+              ) : (
+                savedMeetingBundles.map((bundle) => (
+                  <div
+                    key={bundle.id}
+                    className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-3 flex flex-col gap-2 shadow-inner"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-extrabold text-amber-300 uppercase">
+                          {bundle.metadata.judulKegiatan || 'Rapat Tanpa Judul'}
+                        </h4>
+                        <p className="text-[10px] text-slate-400">
+                          {bundle.metadata.hariTanggal || new Date(bundle.savedAt).toLocaleString()} • {bundle.chunks.length} Segmen Audio • {bundle.photos.length} Foto
+                        </p>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
+                        bundle.status === 'completed'
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                          : bundle.status === 'failed_retryable'
+                          ? 'bg-red-950 text-red-300 border border-red-700 animate-pulse'
+                          : 'bg-amber-950 text-amber-300 border border-amber-700'
+                      }`}>
+                        {bundle.status}
+                      </span>
+                    </div>
+
+                    {bundle.lastError && (
+                      <p className="text-[10px] text-red-300 bg-red-950/60 p-1.5 rounded border border-red-800/60 font-mono">
+                        Error: {bundle.lastError}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleRetryBundleAnalysis(bundle)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-[11px] font-extrabold tracking-wide cursor-pointer shadow"
+                      >
+                        <RefreshCw className="w-3 h-3 animate-spin-slow" />
+                        <span>Coba Analisis Ulang</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadBundleFiles(bundle)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white text-[11px] font-bold tracking-wide cursor-pointer border border-slate-600"
+                      >
+                        <FileText className="w-3 h-3" />
+                        <span>Unduh Audio & Foto</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await deleteMeetingBundle(bundle.id);
+                          const updated = await loadAllMeetingBundles();
+                          setSavedMeetingBundles(updated);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-950/60 hover:bg-red-900 text-red-300 hover:text-white text-[11px] font-bold tracking-wide cursor-pointer ml-auto border border-red-900"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-slate-700/80 mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSavedBundlesModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pengaturan API Cadangan Modal (Groq & OpenAI Failover Settings) */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-gradient-to-b from-[#162E4D] to-[#0B1120] border-2 border-amber-500/60 rounded-2xl p-4 sm:p-6 w-full max-w-lg shadow-2xl text-white max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-700/80 mb-3">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm sm:text-base font-extrabold tracking-wider uppercase">
+                  Pengaturan API Cadangan (Groq / OpenAI Failover)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 mb-4">
+              Konfigurasikan kunci API cadangan (Groq atau OpenAI). Jika Gemini mengalami lonjakan 503 (High Demand), AEGIS-BRIEF akan secara otomatis mengalihkan proses transkripsi suara (Whisper) dan analisis teks ke mesin cadangan pilihan Anda.
+            </p>
+
+            <div className="flex-1 overflow-y-auto space-y-3.5 pr-1">
+              <div>
+                <label className="block text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">
+                  Mode Prioritas &amp; Failover
+                </label>
+                <select
+                  value={backupSettings.priorityMode}
+                  onChange={(e) =>
+                    setBackupSettings((prev) => ({
+                      ...prev,
+                      priorityMode: e.target.value as any,
+                    }))
+                  }
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="automatic">Otomatis (Gemini dulu, lalu Groq/OpenAI saat 503)</option>
+                  <option value="force_groq">Paksa Langsung ke Groq (Llama 3.3 + Whisper)</option>
+                  <option value="force_openai">Paksa Langsung ke OpenAI (GPT-4o-mini + Whisper)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  Groq API Key (Opsional)
+                </label>
+                <input
+                  type="password"
+                  value={backupSettings.groqApiKey}
+                  onChange={(e) =>
+                    setBackupSettings((prev) => ({
+                      ...prev,
+                      groqApiKey: e.target.value,
+                    }))
+                  }
+                  placeholder="gsk_..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder:text-slate-600 outline-none focus:border-amber-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Digunakan untuk transkripsi kilat whisper-large-v3-turbo dan analisis llama-3.3-70b-versatile.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  OpenAI API Key (Opsional)
+                </label>
+                <input
+                  type="password"
+                  value={backupSettings.openaiApiKey}
+                  onChange={(e) =>
+                    setBackupSettings((prev) => ({
+                      ...prev,
+                      openaiApiKey: e.target.value,
+                    }))
+                  }
+                  placeholder="sk-proj-..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder:text-slate-600 outline-none focus:border-amber-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Digunakan untuk transkripsi whisper-1 dan fusi multimodal gpt-4o-mini.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-700/80 mt-4 flex justify-between items-center">
+              <span className="text-[10px] text-emerald-300 font-medium">
+                {backupSettings.groqApiKey || backupSettings.openaiApiKey
+                  ? '✓ Kunci cadangan aktif & tersimpan lokal'
+                  : '⚠️ Belum ada kunci cadangan (mengandalkan Gemini)'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setApiSuccessBanner('Pengaturan API Cadangan berhasil disimpan.');
+                  setShowSettingsModal(false);
+                }}
+                className="px-4 py-2 rounded-xl bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold tracking-wider uppercase shadow cursor-pointer"
+              >
+                Simpan &amp; Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

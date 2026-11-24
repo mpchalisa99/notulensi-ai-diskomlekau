@@ -222,24 +222,191 @@ function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: s
   };
 }
 
+function isTransientOverloadError(err: any): boolean {
+  const status = err?.status || err?.code || err?.error?.code || err?.statusCode;
+  const msg = String(err?.message || JSON.stringify(err) || '').toLowerCase();
+  return (
+    status === 503 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 504 ||
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('429') ||
+    msg.includes('timeout')
+  );
+}
+
+async function callGroqBackup(reqBody: any, systemInstruction: string, schema: any, groqApiKey: string) {
+  if (!groqApiKey) throw new Error('Groq API Key tidak dikonfigurasi.');
+  let transcriptText = '';
+  if (reqBody.audioBase64) {
+    const audioBuf = Buffer.from(reqBody.audioBase64, 'base64');
+    const form = new FormData();
+    const blob = new Blob([audioBuf], { type: reqBody.mimeType || 'audio/webm' });
+    form.append('file', blob, 'audio.webm');
+    form.append('model', 'whisper-large-v3-turbo');
+    form.append('language', 'id');
+
+    const transcriptionRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+      },
+      body: form as any,
+    });
+    if (!transcriptionRes.ok) {
+      const errText = await transcriptionRes.text();
+      throw new Error(`Groq Whisper Error (HTTP ${transcriptionRes.status}): ${errText}`);
+    }
+    const transcriptionJson = await transcriptionRes.json() as any;
+    transcriptText = transcriptionJson.text || '';
+  }
+
+  const promptContent = reqBody.mode === 'cross_modal_fusion'
+    ? `Cross-Modal Fusion Request:\n${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}`
+    : reqBody.mode === 'autonomous_vision'
+    ? `Vision Router Request:\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
+    : `Transkrip Audio Sesi Rapat: ${transcriptText}\nMetadata Rapat: ${JSON.stringify(reqBody.metadata || {})}`;
+
+  const messages: any[] = [
+    { role: 'system', content: `${systemInstruction}\n\nStrict JSON output required matching schema properties.` },
+    { role: 'user', content: promptContent }
+  ];
+
+  const chatRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${groqApiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!chatRes.ok) {
+    const errText = await chatRes.text();
+    throw new Error(`Groq Chat Error (HTTP ${chatRes.status}): ${errText}`);
+  }
+
+  const chatJson = await chatRes.json() as any;
+  const content = chatJson.choices?.[0]?.message?.content || '{}';
+  return { text: content };
+}
+
+async function callOpenAiBackup(reqBody: any, systemInstruction: string, schema: any, openaiApiKey: string) {
+  if (!openaiApiKey) throw new Error('OpenAI API Key tidak dikonfigurasi.');
+  let transcriptText = '';
+  if (reqBody.audioBase64) {
+    const audioBuf = Buffer.from(reqBody.audioBase64, 'base64');
+    const form = new FormData();
+    const blob = new Blob([audioBuf], { type: reqBody.mimeType || 'audio/webm' });
+    form.append('file', blob, 'audio.webm');
+    form.append('model', 'whisper-1');
+    form.append('language', 'id');
+
+    const transcriptionRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: form as any,
+    });
+    if (!transcriptionRes.ok) {
+      const errText = await transcriptionRes.text();
+      throw new Error(`OpenAI Whisper Error (HTTP ${transcriptionRes.status}): ${errText}`);
+    }
+    const transcriptionJson = await transcriptionRes.json() as any;
+    transcriptText = transcriptionJson.text || '';
+  }
+
+  const promptContent = reqBody.mode === 'cross_modal_fusion'
+    ? `Cross-Modal Fusion Request:\n${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}`
+    : reqBody.mode === 'autonomous_vision'
+    ? `Vision Router Request:\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
+    : `Transkrip Audio Sesi Rapat: ${transcriptText}\nMetadata Rapat: ${JSON.stringify(reqBody.metadata || {})}`;
+
+  const messages: any[] = [
+    { role: 'system', content: `${systemInstruction}\n\nStrict JSON output required matching schema properties.` },
+    { role: 'user', content: promptContent }
+  ];
+
+  const chatRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openaiApiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!chatRes.ok) {
+    const errText = await chatRes.text();
+    throw new Error(`OpenAI Chat Error (HTTP ${chatRes.status}): ${errText}`);
+  }
+
+  const chatJson = await chatRes.json() as any;
+  const content = chatJson.choices?.[0]?.message?.content || '{}';
+  return { text: content };
+}
+
 async function callGeminiWithRetryAndFallback(
   ai: GoogleGenAI,
   contents: any,
   systemInstruction: string,
-  schema: any
+  schema: any,
+  reqBody?: any
 ) {
-  const candidateModels = [
-    { name: 'gemini-2.5-flash', useLowThinking: false },
-    { name: 'gemini-3.1-flash-lite', useLowThinking: false },
-    { name: 'gemini-3.8-flash', useLowThinking: false },
-    { name: 'gemini-2.0-flash', useLowThinking: false },
-    { name: 'gemini-4-hydrogen', useLowThinking: true },
+  const preferredModel = reqBody?.preferredModel;
+  const groqApiKey = reqBody?.groqApiKey;
+  const openaiApiKey = reqBody?.openaiApiKey;
+  const priorityMode = reqBody?.priorityMode;
+
+  // 1. Force Groq if requested
+  if (priorityMode === 'force_groq' && groqApiKey) {
+    console.log('Priority Mode: Forcing Groq Backup API...');
+    return await callGroqBackup(reqBody || { mode: 'single' }, systemInstruction, schema, groqApiKey);
+  }
+
+  // 2. Force OpenAI if requested
+  if (priorityMode === 'force_openai' && openaiApiKey) {
+    console.log('Priority Mode: Forcing OpenAI Backup API...');
+    return await callOpenAiBackup(reqBody || { mode: 'single' }, systemInstruction, schema, openaiApiKey);
+  }
+
+  const baseModels = [
+    preferredModel || 'gemini-2.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.5-pro',
+    'gemini-3.1-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-4-hydrogen',
   ];
+
+  // Deduplicate while preserving order
+  const uniqueModelNames = Array.from(new Set(baseModels.filter(Boolean)));
+  const candidateModels = uniqueModelNames.map((name) => ({
+    name,
+    useLowThinking: name === 'gemini-4-hydrogen',
+  }));
 
   let lastError: unknown = null;
 
   for (const candidate of candidateModels) {
-    const maxRetries = 4;
+    const maxRetries = 2;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const config: Record<string, any> = {
@@ -259,35 +426,48 @@ async function callGeminiWithRetryAndFallback(
         return response;
       } catch (err: any) {
         lastError = err;
-        const msg = String(err?.message || '');
-        const status = err?.status || err?.statusCode;
-        const isTransient =
-          status === 429 ||
-          status === 500 ||
-          status === 502 ||
-          status === 503 ||
-          status === 504 ||
-          msg.includes('429') ||
-          msg.includes('503') ||
-          msg.includes('UNAVAILABLE') ||
-          msg.includes('high demand') ||
-          msg.includes('RESOURCE_EXHAUSTED') ||
-          msg.includes('timeout');
+        const isTransient = isTransientOverloadError(err);
 
         if (isTransient && attempt < maxRetries) {
-          const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+          const delayMs = attempt === 1 ? 3000 : 6000;
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
 
         if (isTransient && attempt === maxRetries) {
+          console.warn(`Model ${candidate.name} overloaded (503/429/Transient), switching to next model in fallback chain...`);
           break; // Try next model candidate
         }
 
-        throw err;
+        // Non-transient error or exhausted model
+        if (!isTransient) {
+          throw err;
+        }
+        break;
       }
     }
   }
+
+  // If all Gemini models failed due to transient overload (503/429), try Groq or OpenAI backup!
+  if (isTransientOverloadError(lastError)) {
+    if (groqApiKey) {
+      try {
+        console.log('Gemini exhausted. Failing over to Groq backup API...');
+        return await callGroqBackup(reqBody || { mode: 'single' }, systemInstruction, schema, groqApiKey);
+      } catch (groqErr: any) {
+        console.warn('Groq failover failed:', groqErr?.message);
+      }
+    }
+    if (openaiApiKey) {
+      try {
+        console.log('Gemini exhausted. Failing over to OpenAI backup API...');
+        return await callOpenAiBackup(reqBody || { mode: 'single' }, systemInstruction, schema, openaiApiKey);
+      } catch (openaiErr: any) {
+        console.warn('OpenAI failover failed:', openaiErr?.message);
+      }
+    }
+  }
+
   throw lastError;
 }
 
@@ -372,7 +552,8 @@ Glosarium Istilah: ${glossaryHint}`;
           ],
         },
         SYSTEM_INSTRUCTION,
-        VISION_ROUTER_SCHEMA
+        VISION_ROUTER_SCHEMA,
+        req.body
       );
       stopHeartbeat();
       const rawText = (response.text ?? '{}').trim();
@@ -428,7 +609,8 @@ Instruksi Wajib:
         ai,
         fusionPrompt,
         SYSTEM_INSTRUCTION,
-        REPORT_RESPONSE_SCHEMA
+        REPORT_RESPONSE_SCHEMA,
+        req.body
       );
       stopHeartbeat();
       const rawText = (response.text ?? '{}').trim();
@@ -465,7 +647,8 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
         ai,
         combinedPrompt,
         SYSTEM_INSTRUCTION,
-        REPORT_RESPONSE_SCHEMA
+        REPORT_RESPONSE_SCHEMA,
+        req.body
       );
       stopHeartbeat();
       const rawText = (response.text ?? '{}').trim();
@@ -539,7 +722,8 @@ Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per po
       ai,
       { parts },
       SYSTEM_INSTRUCTION,
-      REPORT_RESPONSE_SCHEMA
+      REPORT_RESPONSE_SCHEMA,
+      req.body
     );
 
     stopHeartbeat();
