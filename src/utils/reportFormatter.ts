@@ -104,8 +104,10 @@ export function createCleanSessionReport(): MeetingReportResult {
     pesertaRapat: '',
     tempat: '',
     isiKegiatan:
-      '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara atau pindaian kamera sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]',
+      '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara per 5 menit atau pindaian kamera/upload gambar sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]',
     executiveSummary: '',
+    correlationAnalysis: '',
+    detailedResume: '',
     actionItems: [],
     cleanTranscript: '',
   };
@@ -113,31 +115,26 @@ export function createCleanSessionReport(): MeetingReportResult {
 
 /**
  * Enforces strict double-newline (`\n\n`) spacing between every numbered point (`1.`, `2.`, `3.`, etc.)
- * so the report never renders as cramped text blocks on mobile or WhatsApp.
  */
 export function normalizeNumberedPointsSpacing(rawBody: string): string {
   if (!rawBody || !rawBody.trim()) {
-    return '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara atau pindaian kamera sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]';
+    return '1. [Konteks & Pokok Bahasan: Menunggu input rekaman suara per 5 menit atau pindaian kamera/upload gambar sesi ini.]\n\n2. [Analisis Teknis, Pembahasan & Temuan: -]\n\n3. [Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut: -]';
   }
 
-  let normalized = rawBody
+  return rawBody
     .replace(/\r\n/g, '\n')
-    // Ensure any inline or single-newline numbered item ("... \n2. " or "... 2. ") starts after an explicit blank line
     .replace(/\n+\s*(?=\d+\.\s+)/g, '\n\n')
-    // Collapse 3+ consecutive newlines down to exact double newline (\n\n)
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-
-  return normalized;
 }
 
 /**
  * Builds the Unified Multi-Modal Session Context Payload (`buildUnifiedSessionContext`)
  * combining all active session inputs:
- * 1. Audio Stream Data (chronological transcripts/translations of all recorded audio chunks)
- * 2. Scanned Invitation Data (`OCR_UNDANGAN`)
- * 3. Scanned Slide / Document Data (`MATERI_PAPARAN`)
- * 4. Field Activity Photos (`DOKUMENTASI_KEGIATAN`)
+ * 1. Audio Stream Data (all 5-minute chunks)
+ * 2. Scanned Invitation Data (`OCR_UNDANGAN`) from camera & manual upload
+ * 3. Scanned Slide / Document Data (`MATERI_PAPARAN`) from camera & manual upload
+ * 4. Field Activity Photos & Visual Observations (`DOKUMENTASI_KEGIATAN`) from camera & manual upload
  */
 export function buildUnifiedSessionContext(
   chunks: AudioChunkItem[],
@@ -161,6 +158,7 @@ export function buildUnifiedSessionContext(
     .filter((p) => p.category === 'OCR_UNDANGAN' && p.status === 'done')
     .map((p) => ({
       photoId: p.id,
+      captureSource: p.captureSource || 'camera',
       capturedAt: p.capturedAt,
       judulKegiatan: p.extractedMetadata?.judulKegiatan,
       hariTanggal: p.extractedMetadata?.hariTanggal,
@@ -168,16 +166,17 @@ export function buildUnifiedSessionContext(
       tempat: p.extractedMetadata?.tempat,
       pimpinanRapat: p.extractedMetadata?.pimpinanRapat,
       pesertaRapat: p.extractedMetadata?.pesertaRapat,
-      extractedText: p.extractedText || '',
+      extractedText: p.extractedText || p.visualCorrelationNote || '',
     }));
 
   const materiPaparanData = capturedPhotos
     .filter((p) => p.category === 'MATERI_PAPARAN' && p.status === 'done')
     .map((p) => ({
       photoId: p.id,
+      captureSource: p.captureSource || 'camera',
       capturedAt: p.capturedAt,
       slideTitle: p.extractedMetadata?.judulKegiatan,
-      extractedKnowledge: p.extractedText || p.confidenceReason || '',
+      extractedKnowledge: p.extractedText || p.visualCorrelationNote || p.confidenceReason || '',
       isiKegiatanDraft: p.isiKegiatanDraft || '',
     }));
 
@@ -189,10 +188,18 @@ export function buildUnifiedSessionContext(
     count: lampiranPhotos.length,
     captions: lampiranPhotos.map(
       (p, idx) =>
-        `Dokumentasi ${idx + 1}: ${
+        `Dokumentasi ${idx + 1} (${p.captureSource === 'upload' ? 'Upload Manual' : 'Kamera'}): ${
           currentMetadata.judulKegiatan || 'Dokumentasi Kegiatan'
         } — ${currentMetadata.hariTanggal || ''} (${p.capturedAt})`
     ),
+    visualObservations: lampiranPhotos
+      .filter((p) => Boolean(p.visualCorrelationNote || p.extractedText))
+      .map((p) => ({
+        photoId: p.id,
+        captureSource: p.captureSource || 'camera',
+        capturedAt: p.capturedAt,
+        observation: p.visualCorrelationNote || p.extractedText || '',
+      })),
   };
 
   return {
@@ -205,8 +212,53 @@ export function buildUnifiedSessionContext(
 }
 
 /**
+ * Builds a ready-to-paste prompt containing all local session data (chunk transcripts, OCR, slides, metadata)
+ * so the operator can paste directly into free external web AI alternatives if Gemini fails.
+ */
+export function buildExternalAiFallbackPrompt(
+  chunks: AudioChunkItem[],
+  capturedPhotos: CapturedPhotoItem[],
+  metadata: MeetingMetadata
+): string {
+  const context = buildUnifiedSessionContext(chunks, capturedPhotos, metadata);
+  return `Anda adalah Perwira Staf Ahli TNI Angkatan Udara (DISKOMLEKAU).
+Tolong gabungkan, korelasikan, dan buat RESUME RAPAT YANG DETIL serta LAPORAN PELAKSANAAN KEGIATAN resmi berdasarkan data berikut:
+
+1. METADATA RAPAT:
+- Judul: ${metadata.judulKegiatan || '(Identifikasi dari transkrip/undangan)'}
+- Hari/Tanggal: ${metadata.hariTanggal || '-'}
+- Jam: ${metadata.pukul || '-'}
+- Tempat: ${metadata.tempat || '-'}
+- Pimpinan: ${metadata.pimpinanRapat || '-'}
+- Peserta: ${metadata.pesertaRapat || '-'}
+- Glosarium Istilah: ${metadata.customGlossary}
+
+2. DATA CHUNK REKAMAN AUDIO (PER 5 MENIT) YANG SUDAH TERKUMPUL (${chunks.length} chunk):
+${
+  context.audioStreamData.length > 0
+    ? context.audioStreamData
+        .map(
+          (seg) =>
+            `[Chunk #${seg.chunkIndex} | ${seg.timestampLabel}]\nRingkasan: ${seg.isiKegiatanSummary}\nTranskrip: ${seg.transcript}`
+        )
+        .join('\n\n')
+    : '(Belum ada transkrip otomatis — silakan unggah file audio chunk yang diunduh ke situs transkripsi gratis lalu tempel teksnya di sini)'
+}
+
+3. HASIL ANALISA GAMBAR UNDANGAN / SLIDE / FOTO KAMERA & UPLOAD MANUAL (${capturedPhotos.length} gambar):
+- OCR Undangan: ${JSON.stringify(context.ocrUndanganData, null, 2)}
+- Materi Paparan: ${JSON.stringify(context.materiPaparanData, null, 2)}
+- Dokumentasi Kegiatan: ${JSON.stringify(context.dokumentasiKegiatanData, null, 2)}
+
+FORMAT OUTPUT YANG DIMINTA:
+A. Poin-poin Isi Laporan Kegiatan (bernomor 1., 2., 3., dst. dengan bahasa dinas TNI AU yang lugas & analitis).
+B. Korelasi Audio & Visual (keterkaitan pembahasan suara dengan gambar undangan/slide/dokumentasi).
+C. Resume Detil Rapat (pembahasan lengkap, angka/spesifikasi teknis, kendala, keputusan komando).
+D. Daftar Tindak Lanjut / Action Items (Tugas, PIC/Satuan, Target Waktu).`;
+}
+
+/**
  * Renders the exact official Diskomlekau Notulen template with clean paragraph & item spacing (`\n\n`)
- * for WhatsApp clipboard (`SALIN LAPORAN (WA)`) and Word (`.docx`) export.
  */
 export function buildOfficialReportText(
   metadata: MeetingMetadata,

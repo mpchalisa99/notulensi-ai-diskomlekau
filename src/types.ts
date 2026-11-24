@@ -7,9 +7,13 @@ export type VisionCategory =
   | 'MATERI_PAPARAN'
   | 'DOKUMENTASI_KEGIATAN';
 
+export type PhotoCaptureSource = 'camera' | 'upload' | 'screen';
+
 export interface CapturedPhotoItem {
   id: string;
   category: VisionCategory;
+  /** Origin of image: camera capture, manual file upload, or Zoom screen frame */
+  captureSource?: PhotoCaptureSource;
   /** Stripped EXIF raw image data URL before watermark */
   cleanSourceDataUrl: string;
   /** Display / export image data URL (watermarked when DOKUMENTASI_KEGIATAN) */
@@ -17,11 +21,14 @@ export interface CapturedPhotoItem {
   capturedAt: string;
   status: 'analyzing' | 'done' | 'error';
   confidenceReason?: string;
-  /** Extracted slide bullet points / OCR text */
+  /** Extracted slide bullet points / OCR text / visual description */
   extractedText?: string;
-  /** Draft 4-point report section extracted from slide/document */
+  /** Detailed visual observation for correlation even on documentation photos */
+  visualCorrelationNote?: string;
+  /** Draft numbered report section extracted from slide/document */
   isiKegiatanDraft?: string;
   extractedMetadata?: Partial<MeetingMetadata>;
+  errorMessage?: string;
   isSample?: boolean;
 }
 
@@ -35,7 +42,11 @@ export interface VisionRouterResponse {
   pimpinanRapat?: string;
   pesertaRapat?: string;
   extractedKnowledge?: string;
+  visualCorrelationNote?: string;
   isiKegiatanDraft?: string;
+  modelUsed?: string;
+  keySlotUsed?: number;
+  failoverTriggered?: boolean;
 }
 
 export interface MeetingMetadata {
@@ -65,8 +76,13 @@ export interface MeetingReportResult {
   tempat?: string;
   isiKegiatan: string;
   executiveSummary: string;
+  correlationAnalysis?: string;
+  detailedResume?: string;
   actionItems: ActionItem[];
   cleanTranscript: string;
+  modelUsed?: string;
+  keySlotUsed?: number;
+  failoverTriggered?: boolean;
 }
 
 export interface AudioChunkItem {
@@ -78,13 +94,27 @@ export interface AudioChunkItem {
   durationSec: number;
   timestampLabel: string;
   status: 'ready' | 'processing' | 'done' | 'error';
+  source?: CaptureMode;
   screenFrames?: string[];
   /** Stored chronological transcript/translation for cross-modal fusion */
   transcript?: string;
-  /** Stored chunk-level 4-point summary */
+  /** Stored chunk-level summary */
   isiKegiatanSummary?: string;
   /** Stored chunk-level action items */
   extractedActionItems?: ActionItem[];
+  /** Timestamp when background analysis completed */
+  analyzedAt?: string;
+  /** Error message if analysis failed */
+  errorMessage?: string;
+}
+
+export interface GeminiFailureInfo {
+  occurred: boolean;
+  message: string;
+  failureReason?: string;
+  model: string;
+  attemptedKeySlots?: number;
+  timestamp: string;
 }
 
 export interface UnifiedAudioSegmentContext {
@@ -98,6 +128,7 @@ export interface UnifiedAudioSegmentContext {
 
 export interface UnifiedOcrUndanganContext {
   photoId: string;
+  captureSource?: PhotoCaptureSource;
   capturedAt: string;
   judulKegiatan?: string;
   hariTanggal?: string;
@@ -110,6 +141,7 @@ export interface UnifiedOcrUndanganContext {
 
 export interface UnifiedMateriPaparanContext {
   photoId: string;
+  captureSource?: PhotoCaptureSource;
   capturedAt: string;
   slideTitle?: string;
   extractedKnowledge: string;
@@ -119,6 +151,12 @@ export interface UnifiedMateriPaparanContext {
 export interface UnifiedDokumentasiContext {
   count: number;
   captions: string[];
+  visualObservations: Array<{
+    photoId: string;
+    captureSource?: PhotoCaptureSource;
+    capturedAt: string;
+    observation: string;
+  }>;
 }
 
 export interface UnifiedSessionContextPayload {

@@ -1,4 +1,4 @@
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 export const config = {
   api: {
@@ -8,6 +8,141 @@ export const config = {
   },
   maxDuration: 60,
 };
+
+function getGeminiClient(customKey?: string): GoogleGenAI {
+  const apiKey = (customKey && customKey.trim()) ? customKey.trim() : process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    throw new Error(
+      'GEMINI_API_KEY belum dikonfigurasi. Silakan masukkan kunci API Anda di Settings atau periksa Environment Variables.'
+    );
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+async function callGroqTranscription(buffer: Buffer, mimeType: string, groqApiKey: string): Promise<string> {
+  const ext = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : 'webm';
+  const filename = `audio.${ext}`;
+  const formData = new FormData();
+  const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
+  formData.append('file', blob, filename);
+  formData.append('model', 'whisper-large-v3-turbo');
+  formData.append('language', 'id');
+  formData.append('response_format', 'json');
+
+  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${groqApiKey}`,
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Groq Whisper API error (HTTP ${res.status}): ${errText}`);
+  }
+  const data = await res.json();
+  return data.text || '';
+}
+
+async function callGroqVision(imageDataUrl: string, prompt: string, groqApiKey: string): Promise<string> {
+  const visionModels = [
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'meta-llama/llama-4-maverick-17b-128e-instruct',
+  ];
+  for (const model of visionModels) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: imageDataUrl } },
+                { type: 'text', text: prompt + '\nReturn JSON format.' }
+              ]
+            }
+          ],
+          response_format: { type: 'json_object' }
+        }),
+      });
+      if (!res.ok) {
+        const status = res.status;
+        const errText = await res.text();
+        if (status === 404 || errText.includes('model_not_found') || errText.includes('not found')) {
+          continue;
+        }
+        throw new Error(`Groq Vision API error (HTTP ${status}): ${errText}`);
+      }
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '{}';
+    } catch (err: any) {
+      if (err?.message?.includes('404') || err?.message?.includes('model_not_found')) {
+        continue;
+      }
+    }
+  }
+  return '{}';
+}
+
+async function callGroqChat(prompt: string, systemInstruction: string, groqApiKey: string): Promise<string> {
+  const chatModels = [
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'llama-3.1-8b-instant',
+  ];
+  let lastErr: any;
+  for (const model of chatModels) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemInstruction + '\nCRITICAL: Return ONLY valid JSON matching the requested schema.' },
+            { role: 'user', content: prompt }
+          ],
+          response_format: { type: 'json_object' }
+        }),
+      });
+      if (!res.ok) {
+        const status = res.status;
+        const errText = await res.text();
+        if (status === 404 || errText.includes('model_not_found') || errText.includes('not found')) {
+          lastErr = new Error(`Groq Chat model ${model} not found`);
+          continue;
+        }
+        throw new Error(`Groq Chat API error (HTTP ${status}): ${errText}`);
+      }
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '{}';
+    } catch (err: any) {
+      lastErr = err;
+      if (err?.message?.includes('404') || err?.message?.includes('model_not_found')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error('All Groq chat models failed.');
+}
 
 function normalizeServerIsiKegiatanSpacing(raw: string): string {
   if (!raw || typeof raw !== 'string') return '';
@@ -72,22 +207,45 @@ const REPORT_RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU yang bekerja dengan ketajaman penalaran **Perwira Staf Ahli TNI Angkatan Udara (TNI AU Staff Officer Analytical Reasoning)**.
+const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis Mendalam & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU yang bekerja dengan ketajaman penalaran **Perwira Staf Ahli TNI Angkatan Udara (TNI AU Staff Officer Analytical Reasoning)**.
 
-I. PENALARAN ANALITIS STAF MILITER (DEEP MILITARY STAFF ANALYTICAL REASONING):
-1. FILTER NOISE, EKSTRAK SUBSTANSI KERAS: Singkirkan basa-basi, sapaan, dan pengulangan lisan. Fokus ketat pada substansi strategis, spesifikasi teknis, kesiapan alutsista, parameter kontrak/pengadaan, kendala operasional/pemeliharaan, dan keputusan komando.
-2. ALUR ANALITIS TERSTRUKTUR PER POIN (\`isiKegiatan\`): Susun \`isiKegiatan\` ke dalam poin-poin bernomor tematis yang logis (\`1.\`, \`2.\`, \`3.\`, dst.) berdasarkan prioritas strategis, dengan baris kosong eksplisit (\`\\n\\n\`) yang memisahkan setiap poin bernomor:
-   - Poin 1 (Konteks & Pokok Bahasan): Tujuan rapat dan data dasar kunci dari undangan/slide.
-   - Poin-Poin Tengah (Analisis Teknis, Pembahasan & Temuan): Sintesis mendalam argumen pembicara dengan angka, parameter teknis, nama satuan, atau komitmen vendor dari slide beserta alasan krusial dan dampak operasional/pemeliharaannya.
-   - Poin Terakhir (Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut): Direktif tegas \`pimpinanRapat\`, milestone, batas waktu, dan satuan/PIC.
-3. BAHASA DINAS STAF TNI AU YANG OTORITATIF: Gunakan bahasa dinas TNI AU yang lugas, analitis, dan presisi.
+I. ANALISIS MULTI-MODAL MENDALAM & EKSTRAKSI BUKTI (EXHAUSTIVE MULTI-MODAL EVIDENCE EXTRACTION):
+1. FILTER NOISE, EKSTRAK SUBSTANSI KERAS:
+   - Singkirkan sepenuhnya basa-basi, sapaan pembuka/penutup, dan pengulangan lisan.
+   - Fokus secara ketat pada substansi strategis: spesifikasi teknis elektronika/komlek, tingkat kesiapan alutsista/radar/jaringan, parameter kontrak/pengadaan, alokasi anggaran, jadwal milestone, kendala operasional/pemeliharaan (*operational bottlenecks*), serta keputusan komando.
 
-II. ATURAN FUSI LINTAS-MODAL (CROSS-MODAL FUSION RULES):
-- RULE A — VISUAL SPELLING ANCHOR: Gunakan teks OCR_UNDANGAN dan MATERI_PAPARAN sebagai rujukan ejaan otoritatif untuk mengoreksi salah eja fonetik speech-to-text.
-- RULE B — NARRATIVE & SLIDE SYNTHESIS: JANGAN memisahkan "Ringkasan Suara" dan "Hasil Scan Foto". Leburkan fakta, angka, dan poin teknis dari MATERI_PAPARAN langsung ke dalam poin-poin \`isiKegiatan\`.
-- RULE C — AUTOMATIC LANGUAGE NORMALIZATION: Adaptasikan istilah teknis berbahasa Inggris ke bahasa dinas staf TNI AU yang formal.
-- RULE D — SYNCHRONIZED ACTION ITEMS: Silangkan instruksi lisan pada audio dengan tabel/jadwal pada slide MATERI_PAPARAN untuk mengisi Tugas, PIC / Satuan, dan Batas Waktu.
-- Jangan menyertakan salam pembuka atau kalimat penutup di dalam field \`isiKegiatan\`.`;
+2. STRUKTUR ANALITIS MENDALAM PER POIN (\`isiKegiatan\`):
+   - Susun \`isiKegiatan\` ke dalam 3 hingga 5 poin bernomor tematis (\`1.\`, \`2.\`, \`3.\`, dst.) di mana SETIAP POIN berisi 3 hingga 5 kalimat terstruktur dan komprehensif, diurutkan berdasarkan prioritas strategis:
+     * **Poin 1 (Latar Belakang & Dasar Rujukan):** Menguraikan dasar rujukan formal (surat, telegram, kontrak, atau unit baseline) serta objektif strategis rapat yang bersumber dari pindaian \`OCR_UNDANGAN\` dan transkrip audio awal.
+     * **Poin-Poin Tengah (Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan):** Membedah setiap angka kuantitatif, persentase, nilai anggaran, parameter frekuensi/radar/rudal, serta tanggal timeline yang ditarik secara silang (*cross-verify*) antara lisan pembicara dan tabel/grafik pada \`MATERI_PAPARAN\`. Menjelaskan *mengapa* suatu kendala teknis krusial dan dampaknya terhadap kesiapan operasional Diskomlekau.
+     * **Poin Terakhir (Implikasi Operasional & Keputusan Pimpinan):** Merumuskan dampak strategis terhadap kesiapan TNI AU serta direktif tegas, tenggat waktu (*deadlines*), dan penanggung jawab (*PIC*) yang diputuskan oleh \`pimpinanRapat\`.
+
+3. CROSS-MODAL REASONING & DISCREPANCY CHECK:
+   - Apabila pembicara dalam audio hanya menyebutkan secara singkat ("seperti tertera pada paparan..."), otomatis perluas dan lengkapi narasi laporan dengan data rinci sub-komponen atau parameter teknis yang tertera pada gambar \`MATERI_PAPARAN\` agar laporan bernilai mandiri (*self-contained*).
+
+4. BAHASA DINAS STAF TNI AU OTORITATIF & SPASI GANDA (\`\\n\\n\`):
+   - Gunakan bahasa dinas staf TNI AU yang lugas, analitis, padat, dan presisi.
+   - SETIAP poin bernomor di dalam \`isiKegiatan\` WAJIB dipisahkan oleh satu baris kosong eksplisit (\`\\n\\n\`):
+
+1. [Paragraf mendalam poin pertama yang merinci latar belakang, dasar rujukan, dan data dasar.]
+
+2. [Paragraf mendalam poin kedua yang membedah spesifikasi teknis, data kuantitatif, dan analisis temuan.]
+
+3. [Paragraf mendalam poin terakhir yang menguraikan implikasi operasional dan direktif pimpinan.]
+
+II. ATURAN FUSI LINTAS-MODAL:
+- **RULE A — VISUAL SPELLING ANCHOR:** Gunakan teks \`OCR_UNDANGAN\` dan \`MATERI_PAPARAN\` sebagai rujukan ejaan otoritatif untuk nama satuan (Diskomlekau, Subdisrudal, Satkomlek), kode alutsista/radar, dan pangkat.
+- **RULE B — NARRATIVE & SLIDE SYNTHESIS:** JANGAN memisahkan "Ringkasan Suara" dan "Hasil Scan Foto". Leburkan seluruh fakta ke dalam alur poin \`isiKegiatan\`.
+- **RULE C — AUTOMATIC LANGUAGE NORMALIZATION:** Terjemahkan istilah teknis berbahasa Inggris dari suara/slide ke bahasa dinas staf TNI AU yang formal.
+- **RULE D — SYNCHRONIZED ACTION ITEMS:** Silangkan instruksi lisan di audio dengan target di slide \`MATERI_PAPARAN\` untuk mengisi \`actionItems\` secara presisi. Jangan menyertakan salam pembuka/penutup di dalam \`isiKegiatan\`.`;
+
+function normalizeAudioMimeType(rawMime?: string): string {
+  const base = (rawMime || 'audio/webm').split(';')[0].trim().toLowerCase();
+  if (base === 'audio/x-m4a' || base === 'audio/m4a') return 'audio/mp4';
+  if (base === 'audio/x-wav') return 'audio/wav';
+  if (base === 'audio/mp3') return 'audio/mpeg';
+  return base || 'audio/webm';
+}
 
 function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: string } {
   if (dataUrlOrBase64.includes(',')) {
@@ -104,28 +262,73 @@ function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: s
   };
 }
 
+async function callGeminiWithSchemaFallback(
+  ai: GoogleGenAI,
+  contents: any,
+  systemInstruction: string,
+  schema: any
+) {
+  const candidateModels = [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+  ];
+  let lastError: unknown = null;
+
+  for (const modelName of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+        },
+      });
+      return response;
+    } catch (err: any) {
+      lastError = err;
+      const msg = String(err?.message || '').toLowerCase();
+      const status = Number(err?.status || err?.statusCode || err?.code || 0);
+      if (
+        status === 404 ||
+        status === 429 ||
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504 ||
+        msg.includes('404') ||
+        msg.includes('429') ||
+        msg.includes('503') ||
+        msg.includes('unavailable') ||
+        msg.includes('high demand') ||
+        msg.includes('overloaded') ||
+        msg.includes('not_found') ||
+        msg.includes('not found') ||
+        msg.includes('no longer available') ||
+        msg.includes('not supported') ||
+        msg.includes('resource_exhausted') ||
+        msg.includes('quota') ||
+        msg.includes('rate limit') ||
+        msg.includes('too many requests')
+      ) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 export default async function handler(req: any, res: any) {
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(400).json({
-        error: 'GEMINI_API_KEY belum dikonfigurasi pada Environment Variables Vercel.',
-      });
-    }
-
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' },
-      },
-    });
-
     const {
       audioBase64,
       mimeType,
@@ -140,164 +343,202 @@ export default async function handler(req: any, res: any) {
       totalChunks = 1,
       previousSummaries = [],
       mode = 'single',
+      customGeminiApiKey,
+      groqApiKey,
+      aiMode = 'auto',
     } = req.body || {};
 
-    const glossaryHint =
-      metadata?.customGlossary ||
-      'Diskomlekau, Kadiskomlekau, Sesdiskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau';
+    const glossaryHint = metadata?.customGlossary?.trim()
+      ? metadata.customGlossary.trim()
+      : 'Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon';
 
-    const candidateModels = [
-      { name: 'gemini-2.5-flash', useLowThinking: false },
-      { name: 'gemini-3.1-flash-lite', useLowThinking: false },
-      { name: 'gemini-3.8-flash', useLowThinking: false },
-      { name: 'gemini-4-hydrogen', useLowThinking: true },
-    ];
+    const useGroq = aiMode === 'groq' && Boolean(groqApiKey && groqApiKey.trim());
+    let failoverTriggered = false;
+    let failoverStatus: string | undefined;
 
-    const invokeModel = async (contents: any, schema: any) => {
-      let lastErr: any;
-      for (const candidate of candidateModels) {
-        try {
-          const genConfig: Record<string, any> = {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            responseMimeType: 'application/json',
-            responseSchema: schema,
-          };
-          if (candidate.useLowThinking) {
-            genConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-          }
-          return await ai.models.generateContent({
-            model: candidate.name,
-            contents,
-            config: genConfig,
-          });
-        } catch (err: any) {
-          lastErr = err;
-          const msg = String(err?.message || '');
-          const status = err?.status || err?.statusCode;
-          if (
-            status === 404 ||
-            status === 429 ||
-            status === 500 ||
-            status === 502 ||
-            status === 503 ||
-            status === 504 ||
-            msg.includes('404') ||
-            msg.includes('503') ||
-            msg.includes('UNAVAILABLE') ||
-            msg.includes('high demand') ||
-            msg.includes('NOT_FOUND') ||
-            msg.includes('not found') ||
-            msg.includes('no longer available')
-          ) {
-            continue;
-          }
-          throw err;
-        }
-      }
-      throw lastErr;
+    const executeGemini = async (contents: any, schema: any) => {
+      const ai = getGeminiClient(customGeminiApiKey);
+      return await callGeminiWithSchemaFallback(ai, contents, SYSTEM_INSTRUCTION, schema);
     };
 
-    if (mode === 'autonomous_vision') {
-      const img = parseDataUrlImage(imageDataUrl || '');
-      const slideContextStr =
-        Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-          ? `\nMateri Slide Sesi Ini Sebelumnya: ${paparanKnowledge.join(' | ')}`
-          : '';
-      const prompt = `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : 'Otomatis'}). Ekstrak substansi strategis, spesifikasi teknis, dan isi surat dengan penalaran analitis Perwira Staf TNI AU. Pisahkan setiap poin bernomor di isiKegiatanDraft dengan baris kosong ganda (\\n\\n).${slideContextStr} Glossary: ${glossaryHint}`;
-      const response = await invokeModel(
-        {
-          parts: [{ inlineData: { mimeType: img.mimeType, data: img.data } }, { text: prompt }],
-        },
-        VISION_ROUTER_SCHEMA
-      );
-      const parsed = JSON.parse((response.text ?? '{}').trim());
-      if (parsed.isiKegiatanDraft) {
-        parsed.isiKegiatanDraft = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatanDraft);
+    const executeGroq = async () => {
+      if (!groqApiKey || !groqApiKey.trim()) {
+        throw new Error('Gemini gagal dan Groq API Key belum dikonfigurasi di Settings.');
       }
-      if (overrideCategory) parsed.category = overrideCategory;
-      return res.status(200).json(parsed);
-    }
+      const key = groqApiKey.trim();
 
-    if (mode === 'cross_modal_fusion' && unifiedContext) {
-      const fusionPrompt = `Terapkan Penalaran Analitis Perwira Staf TNI AU (TNI AU Staff Officer Analytical Reasoning) dan Fusi Lintas-Modal atas seluruh input sesi aktif berikut:
+      if (mode === 'autonomous_vision') {
+        const prompt = `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : 'Otomatis'}). Ekstrak substansi strategis dan spesifikasi teknis dengan penalaran analitis Perwira Staf TNI AU. Glossary: ${glossaryHint}`;
+        const rawJsonStr = await callGroqVision(imageDataUrl || '', prompt, key);
+        const parsed = JSON.parse(rawJsonStr);
+        if (parsed.isiKegiatanDraft) {
+          parsed.isiKegiatanDraft = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatanDraft);
+        }
+        if (overrideCategory) parsed.category = overrideCategory;
+        return {
+          parsed,
+          modelUsed: 'groq-llama-vision',
+        };
+      }
+
+      let transcriptionText = '';
+      if (audioBase64 && typeof audioBase64 === 'string') {
+        try {
+          const audioBuffer = Buffer.from(audioBase64, 'base64');
+          const baseMime = (mimeType || 'audio/webm').split(';')[0].trim().toLowerCase();
+          transcriptionText = await callGroqTranscription(audioBuffer, baseMime, key);
+        } catch (e) {
+          console.warn('Groq Whisper transcription fallback warning:', e);
+        }
+      }
+
+      let chatPrompt = '';
+      if (mode === 'cross_modal_fusion' && unifiedContext) {
+        chatPrompt = `Terapkan Penalaran Analitis Perwira Staf TNI AU dan Fusi Lintas-Modal atas seluruh input sesi aktif berikut:
 1. DATA STREAM AUDIO: ${JSON.stringify(unifiedContext.audioStreamData || [])}
 2. DATA PINDAIAN UNDANGAN (OCR_UNDANGAN): ${JSON.stringify(unifiedContext.ocrUndanganData || [])}
 3. DATA PINDAIAN SLIDE / MATERI PAPARAN (MATERI_PAPARAN): ${JSON.stringify(unifiedContext.materiPaparanData || [])}
 4. DATA DOKUMENTASI KEGIATAN: ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {})}
 5. METADATA SAAT INI: ${JSON.stringify(unifiedContext.currentMetadata || metadata || {})}
-Susun isiKegiatan dalam poin-poin bernomor tematis (Poin 1: Konteks & Pokok Bahasan; Poin Tengah: Analisis Teknis, Pembahasan & Temuan beserta dampak operasional; Poin Terakhir: Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Glossary: ${glossaryHint}`;
-      const response = await invokeModel(fusionPrompt, REPORT_RESPONSE_SCHEMA);
-      const parsed = JSON.parse((response.text ?? '{}').trim());
+Glossary: ${glossaryHint}`;
+      } else if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
+        chatPrompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan dan undangan menjadi satu Laporan Notulensi utuh:\n\n${JSON.stringify(previousSummaries)}`;
+      } else {
+        chatPrompt = `Transkrip Audio (Whisper): "${transcriptionText}"
+Konteks Pindaian Undangan: ${JSON.stringify(ocrKnowledge)}
+Konteks Materi Paparan: ${JSON.stringify(paparanKnowledge)}
+Susun Laporan Pelaksanaan Kegiatan resmi DISKOMLEKAU lengkap dengan isiKegiatan (poin bernomor tematis dengan baris kosong ganda \\n\\n), executiveSummary, actionItems, dan cleanTranscript. Glossary: ${glossaryHint}`;
+      }
+
+      const rawJsonStr = await callGroqChat(chatPrompt, SYSTEM_INSTRUCTION, key);
+      const parsed = JSON.parse(rawJsonStr);
       if (parsed.isiKegiatan) {
         parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
       }
-      return res.status(200).json(parsed);
-    }
+      return {
+        parsed,
+        modelUsed: 'groq-gpt-oss-120b',
+      };
+    };
 
-    if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
-      const slideContextStr =
-        Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-          ? `\nMateri Slide Paparan Sesi Ini:\n${paparanKnowledge.join('\n')}`
-          : '';
-      const ocrContextStr =
-        Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
-          ? `\nData Undangan (OCR_UNDANGAN):\n${ocrKnowledge.join('\n')}`
-          : '';
-      const prompt = `Terapkan penalaran analitis Perwira Staf TNI AU dan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan dan undangan sesi ini menjadi satu Laporan Notulensi utuh dengan pemisah baris kosong ganda (\\n\\n) antar poin bernomor:\n\n${JSON.stringify(previousSummaries)}${ocrContextStr}${slideContextStr}`;
-      const response = await invokeModel(prompt, REPORT_RESPONSE_SCHEMA);
-      const parsed = JSON.parse((response.text ?? '{}').trim());
-      if (parsed.isiKegiatan) {
-        parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
-      }
-      return res.status(200).json(parsed);
-    }
+    let resultPayload: any;
 
-    const baseMime = (mimeType || 'audio/webm').split(';')[0].trim().toLowerCase();
-    const normalizedMimeType =
-      baseMime === 'audio/x-m4a' || baseMime === 'audio/m4a'
-        ? 'audio/mp4'
-        : baseMime === 'audio/x-wav'
-        ? 'audio/wav'
-        : baseMime === 'audio/mp3'
-        ? 'audio/mpeg'
-        : baseMime || 'audio/webm';
+    if (useGroq) {
+      const groqRes = await executeGroq();
+      resultPayload = {
+        ...groqRes.parsed,
+        modelUsed: groqRes.modelUsed,
+        failoverTriggered: false,
+      };
+    } else {
+      try {
+        let geminiContents: any;
+        if (mode === 'autonomous_vision') {
+          const img = parseDataUrlImage(imageDataUrl || '');
+          geminiContents = {
+            parts: [
+              { inlineData: { mimeType: img.mimeType, data: img.data } },
+              { text: `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : 'Otomatis'}). Ekstrak substansi strategis dan spesifikasi teknis. Glossary: ${glossaryHint}` },
+            ],
+          };
+        } else if (mode === 'cross_modal_fusion' && unifiedContext) {
+          geminiContents = `Terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU dan Fusi Lintas-Modal atas seluruh input sesi aktif berikut:
+1. DATA STREAM AUDIO: ${JSON.stringify(unifiedContext.audioStreamData || [])}
+2. OCR UNDANGAN: ${JSON.stringify(unifiedContext.ocrUndanganData || [])}
+3. MATERI PAPARAN: ${JSON.stringify(unifiedContext.materiPaparanData || [])}
+4. DOKUMENTASI KEGIATAN: ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {})}
+5. METADATA: ${JSON.stringify(unifiedContext.currentMetadata || metadata || {})}
+Glossary: ${glossaryHint}`;
+        } else if (mode === 'synthesize' && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
+          geminiContents = `Gabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh dengan pemisah baris kosong ganda (\\n\\n) antar poin:\n\n${JSON.stringify(previousSummaries)}`;
+        } else {
+          const normalizedMimeType = normalizeAudioMimeType(mimeType);
+          const parts: any[] = [
+            {
+              inlineData: {
+                mimeType: normalizedMimeType,
+                data: audioBase64,
+              },
+            },
+          ];
 
-    const parts: any[] = [
-      { inlineData: { mimeType: normalizedMimeType, data: audioBase64 } },
-    ];
+          if (Array.isArray(screenFrames) && screenFrames.length > 0) {
+            screenFrames.slice(0, 4).forEach((frameDataUrl: string) => {
+              if (typeof frameDataUrl === 'string' && frameDataUrl.length > 50) {
+                const img = parseDataUrlImage(frameDataUrl);
+                parts.push({
+                  inlineData: {
+                    mimeType: img.mimeType,
+                    data: img.data,
+                  },
+                });
+              }
+            });
+          }
 
-    if (Array.isArray(screenFrames) && screenFrames.length > 0) {
-      screenFrames.slice(0, 3).forEach((frameDataUrl: string) => {
-        if (typeof frameDataUrl === 'string' && frameDataUrl.length > 50) {
-          const img = parseDataUrlImage(frameDataUrl);
+          const slideContextStr =
+            Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
+              ? `\nKonteks Materi Slide Paparan:\n${paparanKnowledge.join('\n')}`
+              : '';
+
+          const ocrContextStr =
+            Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
+              ? `\nKonteks Pindaian Undangan:\n${ocrKnowledge.join('\n')}`
+              : '';
+
+          const currentTitleHint = metadata?.judulKegiatan?.trim()
+            ? `\nJudul Kegiatan: ${metadata.judulKegiatan.trim()}`
+            : '';
+
           parts.push({
-            inlineData: { mimeType: img.mimeType, data: img.data },
+            text: `Transkripsikan, saring basa-basi lisan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU.${currentTitleHint}
+Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
+Glossary: ${glossaryHint}.${ocrContextStr}${slideContextStr}
+Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin.`,
           });
+          geminiContents = { parts };
         }
-      });
+
+        const schema = mode === 'autonomous_vision' ? VISION_ROUTER_SCHEMA : REPORT_RESPONSE_SCHEMA;
+        const geminiResp = await executeGemini(geminiContents, schema);
+
+        const rawText = (geminiResp.text ?? '{}').trim();
+        const parsed = JSON.parse(rawText);
+        if (parsed.isiKegiatan) {
+          parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
+        }
+        if (parsed.isiKegiatanDraft) {
+          parsed.isiKegiatanDraft = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatanDraft);
+        }
+        if (mode === 'autonomous_vision' && overrideCategory) {
+          parsed.category = overrideCategory;
+        }
+
+        resultPayload = {
+          ...parsed,
+          modelUsed: 'gemini-flash',
+          failoverTriggered: false,
+        };
+      } catch (geminiErr: any) {
+        if (groqApiKey && groqApiKey.trim()) {
+          failoverTriggered = true;
+          failoverStatus = 'Server Gemini sedang padat. Mengalihkan otomatis ke Groq...';
+          const groqRes = await executeGroq();
+          resultPayload = {
+            ...groqRes.parsed,
+            modelUsed: `${groqRes.modelUsed} (Gemini Failover)`,
+            failoverTriggered: true,
+            failoverStatus,
+          };
+        } else {
+          throw geminiErr;
+        }
+      }
     }
 
-    const slideContextStr =
-      Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nIntegrasikan pula poin Materi Paparan sesi ini (Rule A & B): ${paparanKnowledge.join(' | ')}`
-        : '';
-    const ocrContextStr =
-      Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
-        ? `\nGunakan rujukan ejaan Undangan (OCR_UNDANGAN): ${ocrKnowledge.join(' | ')}`
-        : '';
-
-    parts.push({
-      text: `Saring basa-basi lisan dan terapkan Penalaran Analitis Perwira Staf TNI AU (Cross-Modal Fusion) untuk menyusun judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan (poin bernomor tematis dengan baris kosong ganda \\n\\n antar poin), executiveSummary, actionItems, dan cleanTranscript dari suara dan materi rapat sesi ini. Bagian ${chunkIndex + 1}/${totalChunks}. Glossary: ${glossaryHint}${ocrContextStr}${slideContextStr}`,
-    });
-
-    const response = await invokeModel({ parts }, REPORT_RESPONSE_SCHEMA);
-    const parsed = JSON.parse((response.text ?? '{}').trim());
-    if (parsed.isiKegiatan) {
-      parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
-    }
-    return res.status(200).json(parsed);
+    return res.status(200).json(resultPayload);
   } catch (error: any) {
-    console.error('Vercel API Error:', error);
+    console.error('API Error:', error);
     return res.status(400).json({ error: error?.message || 'Gagal memproses data rapat.' });
   }
 }

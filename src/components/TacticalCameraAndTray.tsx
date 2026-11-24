@@ -17,6 +17,7 @@ import {
 import type {
   CapturedPhotoItem,
   MeetingMetadata,
+  PhotoCaptureSource,
   VisionCategory,
 } from '../types';
 
@@ -28,7 +29,8 @@ interface FullscreenCameraModalProps {
   attachmentCount: number;
   onAutonomousPhotoCapture: (
     rawDataUrls: string[],
-    forcedCategory?: VisionCategory
+    forcedCategory?: VisionCategory,
+    captureSource?: PhotoCaptureSource
   ) => void;
 }
 
@@ -150,7 +152,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
         );
         setTimeout(() => setLastSnapFeedback(null), 2200);
 
-        onAutonomousPhotoCapture([dataUrl], forcedCat);
+        onAutonomousPhotoCapture([dataUrl], forcedCat, 'camera');
         return;
       }
     }
@@ -183,7 +185,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
     Promise.all(promises).then((urls) => {
       const valid = urls.filter(Boolean);
       if (valid.length > 0) {
-        onAutonomousPhotoCapture(valid, forcedCat);
+        onAutonomousPhotoCapture(valid, forcedCat, 'camera');
         setLastSnapFeedback(
           `${valid.length} foto berhasil ditambahkan ke daftar sesi ini!`
         );
@@ -584,7 +586,12 @@ export const CollapsibleDataCaptureTray: React.FC<CollapsibleDataCaptureTrayProp
                             : 'text-slate-300 group-hover:text-white'
                         }`}
                       >
-                        {meta.shortLabel}
+                        {meta.shortLabel} •{' '}
+                        {photo.captureSource === 'upload'
+                          ? 'UPLOAD'
+                          : photo.captureSource === 'screen'
+                          ? 'LAYAR'
+                          : 'KAMERA'}
                       </span>
                     </div>
                   );
