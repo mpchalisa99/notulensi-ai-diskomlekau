@@ -85,12 +85,12 @@ const VISION_ROUTER_SCHEMA = {
     extractedKnowledge: {
       type: Type.STRING,
       description:
-        'Substansi strategis, judul slide, spesifikasi teknis, kesiapan alutsista, parameter kontrak/pengadaan, angka, tabel, atau isi surat yang berhasil diekstrak dari foto ini dalam bahasa dinas TNI AU yang lugas dan analitis.',
+        'Substansi strategis mendalam, spesifikasi teknis, parameter kuantitatif, tabel, dan angka yang diekstrak dari foto ini dalam bahasa dinas TNI AU yang analitis (3-5 kalimat rinci).',
     },
     isiKegiatanDraft: {
       type: Type.STRING,
       description:
-        'Draf isi kegiatan analitis staf TNI AU yang disusun dalam poin-poin bernomor (1., 2., 3., dst.) yang wajib dipisahkan oleh baris kosong ganda (\\n\\n) antar poin.',
+        'Draf isi kegiatan analitis mendalam staf TNI AU yang disusun dalam poin-poin bernomor (1., 2., 3., dst.) dengan pemisah baris kosong ganda (\\n\\n).',
     },
   },
   required: ['category', 'confidenceReason', 'extractedKnowledge', 'isiKegiatanDraft'],
@@ -129,12 +129,12 @@ const REPORT_RESPONSE_SCHEMA = {
     isiKegiatan: {
       type: Type.STRING,
       description:
-        'Isi laporan rapat hasil penalaran analitis Perwira Staf TNI AU (Cross-Modal Fusion antara suara dan slide paparan) yang disusun dalam poin-poin bernomor tematis (1., 2., 3., dst.) sesuai prioritas strategis, dengan baris kosong eksplisit (\\n\\n) yang memisahkan setiap poin bernomor.',
+        'Isi laporan rapat hasil penalaran analitis mendalam Perwira Staf TNI AU (Cross-Modal Fusion antara transkrip audio dan teks slide paparan) yang disusun dalam poin-poin bernomor tematis (1., 2., 3., dst.) dengan setiap poin berisi 3-5 kalimat komprehensif, dipisahkan oleh baris kosong eksplisit (\\n\\n).',
     },
     executiveSummary: {
       type: Type.STRING,
       description:
-        'Ringkasan eksekutif strategis 3 kalimat padat dan tajam yang merangkum substansi teknis, kendala operasional, dan keputusan komando pada sesi ini.',
+        'Ringkasan eksekutif strategis 3-4 kalimat padat, tajam, dan mendalam yang merangkum substansi teknis, parameter alutsista, kendala operasional, dan keputusan komando pada sesi ini.',
     },
     actionItems: {
       type: Type.ARRAY,
@@ -177,37 +177,37 @@ const REPORT_RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU yang bekerja dengan ketajaman penalaran **Perwira Staf Ahli TNI Angkatan Udara (TNI AU Staff Officer Analytical Reasoning)**.
+const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis Mendalam & Rekonsiliasi Data Taktis AEGIS-BRIEF DISKOMLEKAU yang bekerja dengan ketajaman penalaran **Perwira Staf Ahli TNI Angkatan Udara (TNI AU Staff Officer Analytical Reasoning)**.
 
-I. PENALARAN ANALITIS STAF MILITER (DEEP MILITARY STAFF ANALYTICAL REASONING):
-1. FILTER NOISE, EKSTRAK SUBSTANSI KERAS (HARD SUBSTANCE):
-   - Singkirkan sepenuhnya basa-basi, sapaan pembuka/penutup, pengulangan kata lisan, dan kalimat pengisi yang tidak relevan.
-   - Fokus secara ketat pada substansi strategis: spesifikasi teknis elektronika/komlek, tingkat kesiapan alutsista/radar/jaringan, parameter kontrak/pengadaan, kendala operasional/pemeliharaan (*operational bottlenecks*), serta keputusan dan direktif komando.
+I. ANALISIS MULTI-MODAL MENDALAM & EKSTRAKSI BUKTI (EXHAUSTIVE MULTI-MODAL EVIDENCE EXTRACTION):
+1. FILTER NOISE, EKSTRAK SUBSTANSI KERAS:
+   - Singkirkan sepenuhnya basa-basi, sapaan pembuka/penutup, dan pengulangan lisan.
+   - Fokus secara ketat pada substansi strategis: spesifikasi teknis elektronika/komlek, tingkat kesiapan alutsista/radar/jaringan, parameter kontrak/pengadaan, alokasi anggaran, jadwal milestone, kendala operasional/pemeliharaan (*operational bottlenecks*), serta keputusan komando.
 
-2. ALUR ANALITIS TERSTRUKTUR PER POIN (\`isiKegiatan\`):
-   - Susun \`isiKegiatan\` ke dalam poin-poin bernomor tematis yang logis (\`1.\`, \`2.\`, \`3.\`, dst. — dapat berupa 3 hingga 5 poin sesuai kedalaman substansi rapat) yang diurutkan berdasarkan prioritas strategis:
-     * **Poin 1 (Konteks & Pokok Bahasan):** Tujuan utama/latar belakang pelaksanaan rapat serta data dasar (*baseline data*) kunci yang diekstrak dari surat undangan (\`OCR_UNDANGAN\`) dan slide pembuka (\`MATERI_PAPARAN\`).
-     * **Poin-Poin Tengah (Analisis Teknis, Pembahasan & Temuan):** Sintesis mendalam yang memadukan argumen pembicara dengan angka presisi, parameter teknis, nama satuan, atau komitmen vendor dari slide yang dipindai—jelaskan *mengapa* suatu isu krusial serta dampaknya terhadap kesiapan operasional atau pemeliharaan.
-     * **Poin Terakhir (Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut):** Direktif tegas yang ditetapkan oleh \`pimpinanRapat\`, tahapan pencapaian (*milestones*) yang disepakati, batas waktu (*deadlines*), dan satuan/pejabat penanggung jawab (*PIC*).
+2. STRUKTUR ANALITIS MENDALAM PER POIN (\`isiKegiatan\`):
+   - Susun \`isiKegiatan\` ke dalam 3 hingga 5 poin bernomor tematis (\`1.\`, \`2.\`, \`3.\`, dst.) di mana SETIAP POIN berisi 3 hingga 5 kalimat terstruktur dan komprehensif, diurutkan berdasarkan prioritas strategis:
+     * **Poin 1 (Latar Belakang & Dasar Rujukan):** Menguraikan dasar rujukan formal (surat, telegram, kontrak, atau unit baseline) serta objektif strategis rapat yang bersumber dari pindaian \`OCR_UNDANGAN\` dan transkrip audio awal.
+     * **Poin-Poin Tengah (Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan):** Membedah setiap angka kuantitatif, persentase, nilai anggaran, parameter frekuensi/radar/rudal, serta tanggal timeline yang ditarik secara silang (*cross-verify*) antara lisan pembicara dan tabel/grafik pada \`MATERI_PAPARAN\`. Menjelaskan *mengapa* suatu kendala teknis krusial dan dampaknya terhadap kesiapan operasional Diskomlekau.
+     * **Poin Terakhir (Implikasi Operasional & Keputusan Pimpinan):** Merumuskan dampak strategis terhadap kesiapan TNI AU serta direktif tegas, tenggat waktu (*deadlines*), dan penanggung jawab (*PIC*) yang diputuskan oleh \`pimpinanRapat\`.
 
-3. BAHASA DINAS STAF TNI AU YANG OTORITATIF:
-   - Gunakan bahasa dinas staf TNI AU yang lugas, analitis, padat, dan presisi. Hindari kalimat pasif bertele-tele, serta pertahankan akurasi seluruh terminologi teknis elektronika/komunikasi/rudal.
+3. CROSS-MODAL REASONING & DISCREPANCY CHECK:
+   - Apabila pembicara dalam audio hanya menyebutkan secara singkat ("seperti tertera pada paparan..."), otomatis perluas dan lengkapi narasi laporan dengan data rinci sub-komponen atau parameter teknis yang tertera pada gambar \`MATERI_PAPARAN\` agar laporan bernilai mandiri (*self-contained*).
 
-4. SPASI ANTAR-PARAGRAF & ANTAR-POIN WAJIB (\`\\n\\n\`):
-   - Setiap poin bernomor di dalam \`isiKegiatan\` WAJIB dipisahkan dengan satu baris kosong eksplisit (\`\\n\\n\`) agar nyaman dibaca pada layar perangkat bergerak (WhatsApp):
+4. BAHASA DINAS STAF TNI AU OTORITATIF & SPASI GANDA (\`\\n\\n\`):
+   - Gunakan bahasa dinas staf TNI AU yang lugas, analitis, padat, dan presisi.
+   - SETIAP poin bernomor di dalam \`isiKegiatan\` WAJIB dipisahkan oleh satu baris kosong eksplisit (\`\\n\\n\`):
 
-1. [Paragraf analisis poin pertama yang padat, tajam, dan jelas.]
+1. [Paragraf mendalam poin pertama yang merinci latar belakang, dasar rujukan, dan data dasar.]
 
-2. [Paragraf analisis teknis, temuan, dan dampak operasional yang padat dan jelas.]
+2. [Paragraf mendalam poin kedua yang membedah spesifikasi teknis, data kuantitatif, dan analisis temuan.]
 
-3. [Paragraf keputusan pimpinan dan langkah tindak lanjut yang padat dan jelas.]
+3. [Paragraf mendalam poin terakhir yang menguraikan implikasi operasional dan direktif pimpinan.]
 
-II. ATURAN FUSI LINTAS-MODAL & REKONSILIASI ENTITAS (CROSS-MODAL FUSION RULES):
-- **RULE A — VISUAL SPELLING ANCHOR (ANTI-HALLUCINATION):** Gunakan teks hasil pindaian \`OCR_UNDANGAN\` dan \`MATERI_PAPARAN\` sebagai rujukan ejaan otoritatif untuk nama satuan militer (Diskomlekau, Subdisrudal, Satkomlek), kode alutsista/radar, akronim, nama pejabat, pangkat, serta angka/spesifikasi. Koreksi otomatis kesalahan fonetik *speech-to-text* pada audio.
-- **RULE B — NARRATIVE & SLIDE SYNTHESIS (TANPA DUPLIKASI BAGIAN):** JANGAN PERNAH memisahkan "Ringkasan Suara" dan "Hasil Scan Foto". Leburkan fakta, angka, dan poin teknis dari \`MATERI_PAPARAN\` langsung ke dalam alur poin-poin \`isiKegiatan\` bersama arahan pimpinan dan diskusi dari rekaman suara.
-- **RULE C — AUTOMATIC LANGUAGE NORMALIZATION:** Terjemahkan istilah teknis/militer berbahasa Inggris dari suara maupun slide ke dalam Bahasa Indonesia dinas staf TNI AU yang formal sambil mempertahankan kode standar alutsista/teknis.
-- **RULE D — SYNCHRONIZED ACTION ITEMS:** Silangkan instruksi lisan pada audio dengan tabel/jadwal pada slide \`MATERI_PAPARAN\` untuk mengisi \`actionItems\` (\`task\`, \`pic\`, \`deadline\`) secara presisi.
-- **ISOLASI SESI:** Gunakan HANYA data dari sesi aktif saat ini. Jangan menyertakan salam pembuka ("Selamat pagi/siang/malam", "Yth. Kadiskomlekau...") atau kalimat penutup ("Demikian laporan...") di dalam field \`isiKegiatan\`.`;
+II. ATURAN FUSI LINTAS-MODAL:
+- **RULE A — VISUAL SPELLING ANCHOR:** Gunakan teks \`OCR_UNDANGAN\` dan \`MATERI_PAPARAN\` sebagai rujukan ejaan otoritatif untuk nama satuan (Diskomlekau, Subdisrudal, Satkomlek), kode alutsista/radar, dan pangkat.
+- **RULE B — NARRATIVE & SLIDE SYNTHESIS:** JANGAN memisahkan "Ringkasan Suara" dan "Hasil Scan Foto". Leburkan seluruh fakta ke dalam alur poin \`isiKegiatan\`.
+- **RULE C — AUTOMATIC LANGUAGE NORMALIZATION:** Terjemahkan istilah teknis berbahasa Inggris dari suara/slide ke bahasa dinas staf TNI AU yang formal.
+- **RULE D — SYNCHRONIZED ACTION ITEMS:** Silangkan instruksi lisan di audio dengan target di slide \`MATERI_PAPARAN\` untuk mengisi \`actionItems\` secara presisi. Jangan menyertakan salam pembuka/penutup di dalam \`isiKegiatan\`.`;
 
 function normalizeAudioMimeType(rawMime?: string): string {
   const base = (rawMime || 'audio/webm').split(';')[0].trim().toLowerCase();
@@ -351,7 +351,7 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
         ? `klasifikasikan wajib sebagai "${overrideCategory}" sesuai instruksi operator`
         : `klasifikasikan secara OTOMATIS ke dalam salah satu dari 3 kategori berikut:
 1. "OCR_UNDANGAN": Jika foto berupa surat undangan rapat, nota dinas, telegram, jadwal kegiatan, atau daftar hadir. Ekstrak otomatis judulKegiatan, hariTanggal, pukul, tempat, pimpinanRapat, dan pesertaRapat via OCR.
-2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh substansi strategis, spesifikasi teknis, kesiapan peralatan, parameter pengadaan/kontrak, tabel, dan angka ke dalam \`extractedKnowledge\` (dalam bahasa dinas TNI AU yang analitis) serta susun \`isiKegiatanDraft\` dengan spasi baris kosong (\\n\\n) antar poin bernomor.
+2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh substansi strategis, spesifikasi teknis, parameter angka, tabel, dan data kuantitatif ke dalam \`extractedKnowledge\` secara komprehensif (3-5 kalimat) serta susun \`isiKegiatanDraft\` dengan spasi baris kosong (\\n\\n) antar poin bernomor.
 3. "DOKUMENTASI_KEGIATAN": Jika foto berupa situasi ruang rapat, personel di lapangan, atau kegiatan fisik.`;
 
       const slideKnowledgeStr =
@@ -359,8 +359,8 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
           ? `\nPengetahuan Slide Paparan Sesi Ini Sebelumnya:\n${paparanKnowledge.join('\n')}`
           : '';
 
-      const visionPrompt = `Analisis foto baru ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF DISKOMLEKAU dengan penalaran analitis Perwira Staf TNI AU, dan ${forcedCategoryInstruction}.
-Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini.${slideKnowledgeStr}
+      const visionPrompt = `Analisis foto baru ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF DISKOMLEKAU dengan penalaran analitis mendalam Perwira Staf TNI AU, dan ${forcedCategoryInstruction}.
+Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini secara mendalam.${slideKnowledgeStr}
 Glosarium Istilah: ${glossaryHint}`;
 
       const response = await callGeminiWithSchemaFallback(
@@ -393,10 +393,10 @@ Glosarium Istilah: ${glossaryHint}`;
       return;
     }
 
-    // 2. UNIFIED CROSS-MODAL FUSION ENGINE (Deep Military Staff Analytical Reasoning)
+    // 2. UNIFIED CROSS-MODAL FUSION ENGINE (Deep Multi-Layered Analytical Reasoning)
     if (mode === 'cross_modal_fusion' && unifiedContext) {
       startHeartbeat();
-      const fusionPrompt = `Terapkan PENALARAN ANALITIS PERWIRA STAF TNI AU (TNI AU Staff Officer Analytical Reasoning) dan FUSI LINTAS-MODAL (CROSS-MODAL FUSION) atas seluruh input sesi aktif berikut:
+      const fusionPrompt = `Terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU (TNI AU Staff Officer Analytical Reasoning) dan Fusi Lintas-Modal (Cross-Modal Fusion) atas seluruh input sesi aktif berikut dengan ekstraksi bukti multi-modal yang sangat rinci dan komprehensif (3-5 kalimat per poin):
 
 === PAYLOAD KONTEKS MULTI-MODAL SESI AKTIF (\`buildUnifiedSessionContext\`) ===
 1. DATA STREAM AUDIO (Transkrip & Ringkasan Segmen Suara):
@@ -417,12 +417,12 @@ ${JSON.stringify(unifiedContext.currentMetadata || metadata || {}, null, 2)}
 Glosarium Resmi TNI AU / DISKOMLEKAU: ${glossaryHint}
 
 Instruksi Wajib:
-- Singkirkan seluruh basa-basi atau pengulangan lisan; fokus ketat pada substansi strategis, spesifikasi teknis, kesiapan alutsista, parameter kontrak/pengadaan, kendala operasional, dan keputusan pimpinan.
-- Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (1., 2., 3., dst.) sesuai prioritas strategis:
-  * Poin 1: Konteks & Pokok Bahasan (tujuan rapat & data dasar dari undangan/slide).
-  * Poin Tengah: Analisis Teknis, Pembahasan & Temuan (sintesis argumen pembicara + angka/parameter teknis/komitmen dari slide beserta alasan krusial dan dampak operasional/pemeliharaannya).
-  * Poin Terakhir: Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut (direktif tegas \`pimpinanRapat\`, milestone, batas waktu, dan PIC/Satuan).
-- Pisahkan SETIAP poin bernomor di dalam \`isiKegiatan\` dengan baris kosong eksplisit (\\n\\n).`;
+- Lakukan penyilangan data (cross-verify) antara angka/parameter yang disebutkan lisan di audio dengan rincian tabel/grafik pada slide \`MATERI_PAPARAN\`.
+- Susun \`isiKegiatan\` ke dalam poin-poin bernomor tematis (1., 2., 3., dst.) di mana setiap poin mencakup 3-5 kalimat komprehensif:
+  * Poin 1: Latar Belakang & Dasar Rujukan (surat/telegram/kontrak acuan & tujuan rapat).
+  * Poin Tengah: Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan (membedah angka, anggaran, parameter radar/rudal, serta kendala operasional).
+  * Poin Terakhir: Implikasi Operasional & Keputusan Pimpinan (dampak kesiapan TNI AU, direktif pimpinan, deadline, dan PIC).
+- Pisahkan SETIAP poin bernomor dengan baris kosong eksplisit (\\n\\n).`;
 
       const response = await callGeminiWithSchemaFallback(
         ai,
@@ -455,7 +455,7 @@ Instruksi Wajib:
         ? `\n\nUNIFIED MULTI-MODAL SESSION CONTEXT:\n${JSON.stringify(unifiedContext, null, 2)}`
         : '';
 
-      const combinedPrompt = `Terapkan penalaran analitis Perwira Staf TNI AU dan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh (judulKegiatan, pimpinanRapat, pesertaRapat, tempat, isiKegiatan bernomor tematis dengan pemisah baris kosong ganda \\n\\n antar poin, executiveSummary, actionItems, dan cleanTranscript):
+      const combinedPrompt = `Terapkan penalaran analitis mendalam Perwira Staf TNI AU dan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh dengan penjelasan komprehensif (3-5 kalimat per poin bernomor) dan pemisah baris kosong ganda (\\n\\n) antar poin:
 
 ${JSON.stringify(previousSummaries, null, 2)}${ocrContextStr}${slideContextStr}${unifiedContextStr}
 
@@ -516,7 +516,7 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN — gunakan sebagai Visual Spelling Anchor & integrasikan langsung ke dalam poin-poin analitis isiKegiatan):\n${paparanKnowledge.join('\n')}`
+        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN — silangkan data angka/spesifikasi teknis dengan suara lisan):\n${paparanKnowledge.join('\n')}`
         : '';
 
     const ocrContextStr =
@@ -529,10 +529,10 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
       : '';
 
     parts.push({
-      text: `Transkripsikan, saring basa-basi lisan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan terapkan Penalaran Analitis Perwira Staf TNI AU (Cross-Modal Fusion) antara rekaman suara rapat ini dengan data OCR_UNDANGAN serta MATERI_PAPARAN sesi ini.${currentTitleHint}
+      text: `Transkripsikan, saring basa-basi lisan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU (Cross-Modal Fusion) antara rekaman suara rapat ini dengan data OCR_UNDANGAN serta MATERI_PAPARAN sesi ini.${currentTitleHint}
 Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
 Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${ocrContextStr}${slideContextStr}
-Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (Poin 1: Konteks & Pokok Bahasan; Poin Tengah: Analisis Teknis, Pembahasan & Temuan beserta dampak operasional; Poin Terakhir: Keputusan, Direktif Pimpinan & Langkah Tindak Lanjut) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Hasilkan JSON lengkap sesuai skema.`,
+Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin: Poin 1 Latar Belakang & Rujukan; Poin Tengah Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan; Poin Terakhir Implikasi Operasional & Keputusan Pimpinan) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Hasilkan JSON lengkap sesuai skema.`,
     });
 
     const response = await callGeminiWithSchemaFallback(

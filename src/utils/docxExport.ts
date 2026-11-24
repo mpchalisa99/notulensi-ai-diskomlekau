@@ -13,7 +13,7 @@ import {
   WidthType,
 } from 'docx';
 import type { ActionItem, CapturedPhotoItem, MeetingMetadata } from '../types';
-import { burnTacticalBannerWatermark, getImageDimensions } from './tacticalWatermark';
+import { burnTacticalBannerWatermark } from './tacticalWatermark';
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array | null {
   try {
@@ -37,19 +37,58 @@ function dataUrlToUint8Array(dataUrl: string): Uint8Array | null {
   }
 }
 
-function computeDocxImageDimensions(
-  naturalWidth: number,
-  naturalHeight: number
-): { width: number; height: number } {
-  const maxWidth = 480;
-  const maxHeight = 360;
-  const safeW = Math.max(1, naturalWidth);
-  const safeH = Math.max(1, naturalHeight);
-  const scale = Math.min(maxWidth / safeW, maxHeight / safeH);
-  return {
-    width: Math.max(160, Math.round(safeW * scale)),
-    height: Math.max(120, Math.round(safeH * scale)),
-  };
+/**
+ * Normalizes any portrait or landscape image into a strict uniform 16:9 landscape canvas (e.g. 1280x720)
+ * with a dark-slate tactical letterbox/pillarbox frame so images never stretch or distort.
+ */
+async function normalizeToLandscapeCanvas(
+  sourceDataUrl: string,
+  judulKegiatan: string,
+  hariTanggal: string
+): Promise<string> {
+  const watermarked = await burnTacticalBannerWatermark(
+    sourceDataUrl,
+    judulKegiatan,
+    hariTanggal
+  );
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const targetW = 1280;
+      const targetH = 720; // 16:9 landscape frame
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(watermarked);
+        return;
+      }
+
+      // Fill background with solid dark tactical slate (#0F172A)
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(0, 0, targetW, targetH);
+
+      const natW = img.naturalWidth || img.width || 800;
+      const natH = img.naturalHeight || img.height || 600;
+
+      // Calculate object-contain scaling to fit inside 16:9 without cropping or distortion
+      const scale = Math.min(targetW / natW, targetH / natH);
+      const drawW = Math.round(natW * scale);
+      const drawH = Math.round(natH * scale);
+      const offsetX = Math.round((targetW - drawW) / 2);
+      const offsetY = Math.round((targetH - drawH) / 2);
+
+      ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+      resolve(canvas.toDataURL('image/jpeg', 0.90));
+    };
+    img.onerror = () => resolve(watermarked);
+    img.src = watermarked;
+  });
 }
 
 export async function exportReportToDocx(
@@ -201,7 +240,7 @@ export async function exportReportToDocx(
     );
   }
 
-  // Embed ALL photos from attachmentPhotos[] (DOKUMENTASI_KEGIATAN / LAMPIRAN) into the .docx
+  // Embed ALL photos from attachmentPhotos[] (DOKUMENTASI_KEGIATAN / LAMPIRAN) in a 2-Column Symmetric Table Grid
   const lampiranPhotos = (attachmentPhotos || []).filter(
     (p) => p.category === 'DOKUMENTASI_KEGIATAN'
   );
@@ -213,7 +252,7 @@ export async function exportReportToDocx(
         heading: HeadingLevel.HEADING_3,
         children: [
           new TextRun({
-            text: `LAMPIRAN DOKUMENTASI KEGIATAN (${lampiranPhotos.length} FOTO WATERMARKED)`,
+            text: `LAMPIRAN DOKUMENTASI KEGIATAN (${lampiranPhotos.length} FOTO LANDSCAPE)`,
             font: 'Arial',
             size: 22,
             bold: true,
@@ -222,31 +261,40 @@ export async function exportReportToDocx(
       })
     );
 
-    for (let idx = 0; idx < lampiranPhotos.length; idx++) {
-      const photo = lampiranPhotos[idx];
+    // Group photos into pairs for 2-column symmetric rows
+    const photoRowsData: CapturedPhotoItem[][] = [];
+    for (let i = 0; i < lampiranPhotos.length; i += 2) {
+      photoRowsData.push(lampiranPhotos.slice(i, i + 2));
+    }
 
-      // Ensure every attachment photo has the up-to-date [JUDUL KEGIATAN] - [TANGGAL] watermark
-      const watermarkedDataUrl = await burnTacticalBannerWatermark(
-        photo.cleanSourceDataUrl || photo.displayDataUrl,
+    const docxTableRows: TableRow[] = [];
+
+    for (let rowIndex = 0; rowIndex < photoRowsData.length; rowIndex++) {
+      const pair = photoRowsData[rowIndex];
+      const cell1Cells: any[] = [];
+      const cell2Cells: any[] = [];
+
+      // Process Photo 1 in Row
+      const photo1 = pair[0];
+      const globalIdx1 = rowIndex * 2;
+      const normalizedUrl1 = await normalizeToLandscapeCanvas(
+        photo1.cleanSourceDataUrl || photo1.displayDataUrl,
         metadata.judulKegiatan,
         metadata.hariTanggal
       );
+      const imgBytes1 = dataUrlToUint8Array(normalizedUrl1);
 
-      const { width: natW, height: natH } = await getImageDimensions(watermarkedDataUrl);
-      const { width: scaledW, height: scaledH } = computeDocxImageDimensions(natW, natH);
-      const imgBytes = dataUrlToUint8Array(watermarkedDataUrl);
-
-      if (imgBytes) {
-        extraChildren.push(
+      if (imgBytes1) {
+        cell1Cells.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { before: 160, after: 60 },
+            spacing: { before: 60, after: 40 },
             children: [
               new ImageRun({
-                data: imgBytes,
+                data: imgBytes1,
                 transformation: {
-                  width: scaledW,
-                  height: scaledH,
+                  width: 280,
+                  height: 158, // Exact 16:9 landscape aspect ratio in docx units
                 },
                 type: 'jpg',
               }),
@@ -254,25 +302,112 @@ export async function exportReportToDocx(
           })
         );
       }
-
-      extraChildren.push(
+      cell1Cells.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
-          spacing: { after: 220 },
+          spacing: { after: 100 },
           children: [
             new TextRun({
-              text: `Dokumentasi ${idx + 1}: ${
-                metadata.judulKegiatan || 'Dokumentasi Kegiatan'
-              } — ${metadata.hariTanggal || ''} (${photo.capturedAt})`,
+              text: `Dokumentasi ${globalIdx1 + 1}: ${
+                metadata.judulKegiatan || 'Kegiatan Rapat'
+              }`,
               font: 'Arial',
-              size: 18,
+              size: 16,
               bold: true,
               italics: true,
             }),
           ],
         })
       );
+
+      // Process Photo 2 in Row (if exists)
+      if (pair[1]) {
+        const photo2 = pair[1];
+        const globalIdx2 = rowIndex * 2 + 1;
+        const normalizedUrl2 = await normalizeToLandscapeCanvas(
+          photo2.cleanSourceDataUrl || photo2.displayDataUrl,
+          metadata.judulKegiatan,
+          metadata.hariTanggal
+        );
+        const imgBytes2 = dataUrlToUint8Array(normalizedUrl2);
+
+        if (imgBytes2) {
+          cell2Cells.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 60, after: 40 },
+              children: [
+                new ImageRun({
+                  data: imgBytes2,
+                  transformation: {
+                    width: 280,
+                    height: 158,
+                  },
+                  type: 'jpg',
+                }),
+              ],
+            })
+          );
+        }
+        cell2Cells.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 100 },
+            children: [
+              new TextRun({
+                text: `Dokumentasi ${globalIdx2 + 1}: ${
+                  metadata.judulKegiatan || 'Kegiatan Rapat'
+                }`,
+                font: 'Arial',
+                size: 16,
+                bold: true,
+                italics: true,
+              }),
+            ],
+          })
+        );
+      } else {
+        // Empty placeholder cell for symmetric alignment when odd number of photos
+        cell2Cells.push(
+          new Paragraph({
+            children: [new TextRun({ text: '' })],
+          })
+        );
+      }
+
+      docxTableRows.push(
+        new TableRow({
+          cantSplit: true, // Prevents row from splitting awkwardly across page breaks
+          children: [
+            new TableCell({
+              width: { size: 50, type: WidthType.PERCENTAGE },
+              margins: { top: 120, bottom: 160, left: 100, right: 100 },
+              children: cell1Cells,
+            }),
+            new TableCell({
+              width: { size: 50, type: WidthType.PERCENTAGE },
+              margins: { top: 120, bottom: 160, left: 100, right: 100 },
+              children: cell2Cells,
+            }),
+          ],
+        })
+      );
     }
+
+    extraChildren.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: {
+          top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          insideHorizontal: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          insideVertical: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        },
+        rows: docxTableRows,
+      })
+    );
   }
 
   const doc = new Document({
