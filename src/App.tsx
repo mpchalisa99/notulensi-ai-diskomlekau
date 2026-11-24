@@ -133,13 +133,20 @@ export default function App() {
     isManualEditLockedRef.current = isManualEditLocked;
   }, [isManualEditLocked]);
 
-  // Restore any persisted audio chunks from IndexedDB (`aegis_audio_vault`) if OS recovered from memory pressure
+  // Always reset to a clean new session on app startup and drop old data
   useEffect(() => {
-    loadAudioChunksFromVault().then((persisted) => {
-      if (persisted && persisted.length > 0) {
-        setChunks((prev) => (prev.length === 0 ? persisted : prev));
-      }
-    });
+    clearAudioVaultChunks().catch(() => {});
+    const now = new Date();
+    setChunks([]);
+    setScreenFrames([]);
+    setCapturedPhotos([]);
+    setSelectedPhotoId(null);
+    setCustomFullText(null);
+    setIsManualEditLocked(false);
+    setApiError(null);
+    setIsSessionExited(false);
+    setMetadata(createCleanSessionMetadata(now));
+    setReport(createCleanSessionReport());
   }, []);
 
   // Derived array of all LAMPIRAN / DOKUMENTASI_KEGIATAN photos (unlimited count: 2, 5, 10+)
