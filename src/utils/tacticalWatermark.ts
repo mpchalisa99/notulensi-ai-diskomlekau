@@ -1,12 +1,6 @@
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-/**
- * Strips sensitive camera EXIF metadata and standardizes all images into a clean,
- * professional landscape format (16:9 aspect ratio, 1280x720) with proportional scaling
- * and letterboxing/cropping so all photos are straight and uniform.
+ * Strips all sensitive camera EXIF/GPS metadata by re-encoding the image through an HTML5 Canvas
+ * while strictly preserving the image's natural aspect ratio.
  */
 export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise<string> {
   return new Promise((resolve) => {
@@ -15,13 +9,12 @@ export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise
     img.onload = () => {
       const naturalW = img.naturalWidth || img.width || 1280;
       const naturalH = img.naturalHeight || img.height || 720;
-
-      const targetW = 1280;
-      const targetH = 720; // Standard 16:9 landscape
+      const maxDim = 1280;
+      const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
 
       const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
+      canvas.width = Math.max(320, Math.round(naturalW * scale));
+      canvas.height = Math.max(240, Math.round(naturalH * scale));
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -29,33 +22,8 @@ export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise
         return;
       }
 
-      // Fill background dark navy slate
-      ctx.fillStyle = '#0B1120';
-      ctx.fillRect(0, 0, targetW, targetH);
-
-      // Proportional fit (contain/cover) to landscape 16:9
-      const imgAspect = naturalW / naturalH;
-      const targetAspect = targetW / targetH;
-
-      let drawW = targetW;
-      let drawH = targetH;
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (imgAspect > targetAspect) {
-        // Image is wider than 16:9 -> fit width, letterbox top/bottom
-        drawW = targetW;
-        drawH = targetW / imgAspect;
-        offsetY = (targetH - drawH) / 2;
-      } else {
-        // Image is taller (portrait) or square -> fit height, letterbox left/right (straightened landscape framing)
-        drawH = targetH;
-        drawW = targetH * imgAspect;
-        offsetX = (targetW - drawW) / 2;
-      }
-
-      ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-      resolve(canvas.toDataURL('image/jpeg', 0.75));
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(sourceDataUrl);
     img.src = sourceDataUrl;
@@ -73,17 +41,17 @@ export async function getImageDimensions(
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       resolve({
-        width: img.naturalWidth || img.width || 1280,
-        height: img.naturalHeight || img.height || 720,
+        width: img.naturalWidth || img.width || 800,
+        height: img.naturalHeight || img.height || 450,
       });
     };
-    img.onerror = () => resolve({ width: 1280, height: 720 });
+    img.onerror = () => resolve({ width: 800, height: 450 });
     img.src = dataUrl;
   });
 }
 
 /**
- * Strips EXIF, standardizes to landscape, and burns a permanent, high-contrast bottom banner watermark onto the image:
+ * Strips EXIF and burns a permanent, high-contrast bottom banner watermark onto the image:
  * "[JUDUL KEGIATAN] - [TANGGAL]"
  */
 export async function burnTacticalBannerWatermark(
@@ -97,13 +65,12 @@ export async function burnTacticalBannerWatermark(
     img.onload = () => {
       const naturalW = img.naturalWidth || img.width || 1280;
       const naturalH = img.naturalHeight || img.height || 720;
-
-      const targetW = 1280;
-      const targetH = 720;
+      const maxDim = 1280;
+      const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
 
       const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
+      canvas.width = Math.max(320, Math.round(naturalW * scale));
+      canvas.height = Math.max(240, Math.round(naturalH * scale));
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -111,42 +78,21 @@ export async function burnTacticalBannerWatermark(
         return;
       }
 
-      ctx.fillStyle = '#0B1120';
-      ctx.fillRect(0, 0, targetW, targetH);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const imgAspect = naturalW / naturalH;
-      const targetAspect = targetW / targetH;
-
-      let drawW = targetW;
-      let drawH = targetH;
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (imgAspect > targetAspect) {
-        drawW = targetW;
-        drawH = targetW / imgAspect;
-        offsetY = (targetH - drawH) / 2;
-      } else {
-        drawH = targetH;
-        drawW = targetH * imgAspect;
-        offsetX = (targetW - drawW) / 2;
-      }
-
-      ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-
-      const stripH = 92;
-      const stripY = targetH - stripH;
+      const stripH = Math.max(44, Math.round(canvas.height * 0.13));
+      const stripY = canvas.height - stripH;
 
       // High-contrast dark tactical banner
-      ctx.fillStyle = 'rgba(11, 17, 32, 0.94)';
-      ctx.fillRect(0, stripY, targetW, stripH);
+      ctx.fillStyle = 'rgba(11, 17, 32, 0.92)';
+      ctx.fillRect(0, stripY, canvas.width, stripH);
 
       // Top accent line
       ctx.strokeStyle = '#F59E0B';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(0, stripY);
-      ctx.lineTo(targetW, stripY);
+      ctx.lineTo(canvas.width, stripY);
       ctx.stroke();
 
       const titleUpper = (
@@ -157,20 +103,22 @@ export async function burnTacticalBannerWatermark(
 
       // Main high-contrast amber-gold watermark text
       ctx.fillStyle = '#F59E0B';
-      ctx.font = 'bold 22px sans-serif';
-      ctx.fillText(bannerText, 20, stripY + 36, targetW - 40);
+      const mainFontSize = Math.max(12, Math.round(canvas.width * 0.022));
+      ctx.font = `bold ${mainFontSize}px sans-serif`;
+      ctx.fillText(bannerText, 16, stripY + Math.round(stripH * 0.52), canvas.width - 32);
 
       // Sub-line security stamp
       ctx.fillStyle = '#E2E8F0';
-      ctx.font = '13px monospace';
+      const subFontSize = Math.max(9, Math.round(canvas.width * 0.015));
+      ctx.font = `${subFontSize}px monospace`;
       ctx.fillText(
-        'AEGIS-BRIEF DISKOMLEKAU • EXIF STRIPPED • UNIFORM LANDSCAPE • DOKUMENTASI RESMI TERVERIFIKASI',
-        20,
-        stripY + 70,
-        targetW - 40
+        'AEGIS-BRIEF DISKOMLEKAU • EXIF STRIPPED • DOKUMENTASI RESMI TERVERIFIKASI',
+        16,
+        stripY + Math.round(stripH * 0.84),
+        canvas.width - 32
       );
 
-      resolve(canvas.toDataURL('image/jpeg', 0.75));
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(cleanSourceDataUrl);
     img.src = cleanSourceDataUrl;

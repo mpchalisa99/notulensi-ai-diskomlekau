@@ -23,9 +23,6 @@ import {
   Lock,
   Loader2,
   ListChecks,
-  Settings,
-  Copy,
-  ScrollText,
 } from 'lucide-react';
 import type {
   AudioChunkItem,
@@ -46,7 +43,6 @@ import {
   detectWaktuSalam,
   formatIndonesianDate,
   getTodayIsoDate,
-  mergeChronologicalTranscripts,
 } from './utils/reportFormatter';
 import { exportReportToDocx } from './utils/docxExport';
 import {
@@ -59,11 +55,7 @@ import {
   removeAudioChunkFromVault,
   saveAudioChunkToVault,
   saveSessionDraftToArchive,
-  saveMeetingBundle,
-  loadAllMeetingBundles,
-  deleteMeetingBundle,
   type ArchivedSessionRecord,
-  type MeetingBundleRecord,
 } from './utils/audioVaultDb';
 import { WingCrestEmblem, KomlekOmegaEmblem } from './components/DiskomlekauEmblems';
 import { AudioRecorder } from './components/AudioRecorder';
@@ -81,15 +73,6 @@ const CATEGORY_CYCLE: VisionCategory[] = [
   'MATERI_PAPARAN',
   'DOKUMENTASI_KEGIATAN',
 ];
-
-export interface BackupAiSettings {
-  primaryProvider: 'gemini' | 'groq' | 'openai';
-  groqApiKey: string;
-  openaiApiKey: string;
-  priorityMode: 'automatic' | 'force_groq' | 'force_openai';
-}
-
-const STORAGE_BACKUP_SETTINGS_KEY = 'aegis_ai_backup_settings_v1';
 
 export default function App() {
   // Initialize with clean, non-stale session state bound to current system clock
@@ -123,79 +106,7 @@ export default function App() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiSuccessBanner, setApiSuccessBanner] = useState<string | null>(null);
   const [copiedWA, setCopiedWA] = useState(false);
-  const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
-
-  const [savedMeetingBundles, setSavedMeetingBundles] = useState<MeetingBundleRecord[]>([]);
-  const [showSavedBundlesModal, setShowSavedBundlesModal] = useState(false);
-
-  const [backupSettings, setBackupSettings] = useState<BackupAiSettings>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_BACKUP_SETTINGS_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {
-      primaryProvider: 'gemini',
-      groqApiKey: '',
-      openaiApiKey: '',
-      priorityMode: 'automatic',
-    };
-  });
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_BACKUP_SETTINGS_KEY, JSON.stringify(backupSettings));
-    } catch {}
-  }, [backupSettings]);
-
-  useEffect(() => {
-    loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
-  }, []);
-
-  const handleRetryBundleAnalysis = async (bundle: MeetingBundleRecord) => {
-    setShowSavedBundlesModal(false);
-    setMetadata(bundle.metadata);
-    setCapturedPhotos(bundle.photos);
-    const rehydratedChunks: AudioChunkItem[] = bundle.chunks.map((c) => ({
-      id: c.id,
-      index: c.index,
-      blob: c.blob,
-      mimeType: c.mimeType,
-      timestampLabel: c.timestampLabel,
-      durationSec: c.durationSec,
-      sizeBytes: c.sizeBytes,
-      status: 'ready',
-    }));
-    setChunks(rehydratedChunks);
-    await handleProcessWithAI(rehydratedChunks);
-  };
-
-  const handleDownloadBundleFiles = async (bundle: MeetingBundleRecord) => {
-    try {
-      bundle.chunks.forEach((chunk, idx) => {
-        const url = URL.createObjectURL(chunk.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${bundle.metadata.judulKegiatan || 'rapat'}_audio_segmen_${idx + 1}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      });
-      bundle.photos.forEach((photo, idx) => {
-        const a = document.createElement('a');
-        a.href = photo.displayDataUrl;
-        a.download = `${bundle.metadata.judulKegiatan || 'rapat'}_foto_${idx + 1}.jpg`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      });
-      setApiSuccessBanner('Berhasil mengunduh seluruh file audio dan foto mentah dari rapat tersimpan.');
-    } catch (err: any) {
-      setApiError('Gagal mengunduh file rapat: ' + err?.message);
-    }
-  };
 
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const directLampiranInputRef = useRef<HTMLInputElement | null>(null);
@@ -205,7 +116,6 @@ export default function App() {
   const capturedPhotosRef = useRef<CapturedPhotoItem[]>(capturedPhotos);
   const chunksRef = useRef<AudioChunkItem[]>(chunks);
   const isManualEditLockedRef = useRef<boolean>(isManualEditLocked);
-  const backupSettingsRef = useRef<BackupAiSettings>(backupSettings);
 
   useEffect(() => {
     metadataRef.current = metadata;
@@ -223,24 +133,13 @@ export default function App() {
     isManualEditLockedRef.current = isManualEditLocked;
   }, [isManualEditLocked]);
 
+  // Restore any persisted audio chunks from IndexedDB (`aegis_audio_vault`) if OS recovered from memory pressure
   useEffect(() => {
-    backupSettingsRef.current = backupSettings;
-  }, [backupSettings]);
-
-  // Always reset to a clean new session on app startup and drop old data
-  useEffect(() => {
-    clearAudioVaultChunks().catch(() => {});
-    const now = new Date();
-    setChunks([]);
-    setScreenFrames([]);
-    setCapturedPhotos([]);
-    setSelectedPhotoId(null);
-    setCustomFullText(null);
-    setIsManualEditLocked(false);
-    setApiError(null);
-    setIsSessionExited(false);
-    setMetadata(createCleanSessionMetadata(now));
-    setReport(createCleanSessionReport());
+    loadAudioChunksFromVault().then((persisted) => {
+      if (persisted && persisted.length > 0) {
+        setChunks((prev) => (prev.length === 0 ? persisted : prev));
+      }
+    });
   }, []);
 
   // Derived array of all LAMPIRAN / DOKUMENTASI_KEGIATAN photos (unlimited count: 2, 5, 10+)
@@ -368,7 +267,6 @@ export default function App() {
     setSelectedPhotoId(null);
     setCustomFullText(null);
     setIsManualEditLocked(false);
-    setCopiedTranscript(false);
     setApiError(null);
     setIsSessionExited(false);
     setMetadata(createCleanSessionMetadata(now));
@@ -414,21 +312,6 @@ export default function App() {
     setIsSessionExited(false);
   };
 
-  const isTransientMessageOrStatus = (statusCode: number, parsed: any): boolean => {
-    if (parsed?.isTransientOverload === true || statusCode === 503 || statusCode === 429) {
-      return true;
-    }
-    const msg = String(parsed?.error || '').toLowerCase();
-    return (
-      msg.includes('503') ||
-      msg.includes('unavailable') ||
-      msg.includes('high demand') ||
-      msg.includes('overloaded') ||
-      msg.includes('resource_exhausted') ||
-      msg.includes('429')
-    );
-  };
-
   const parseApiResponseSafe = async (response: Response, contextLabel: string) => {
     const rawText = await response.text();
     const trimmed = rawText.trim();
@@ -438,108 +321,28 @@ export default function App() {
       trimmed.startsWith('<!DOCTYPE') ||
       trimmed.startsWith('<html')
     ) {
-      const err: any = new Error(
+      throw new Error(
         `${contextLabel}: Server mengembalikan halaman HTML (HTTP ${response.status}). Silakan coba kembali.`
       );
-      err.isTransientOverload = response.status === 503 || response.status === 429;
-      throw err;
     }
 
     let parsed: any;
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      const err: any = new Error(
+      throw new Error(
         `${contextLabel}: Format respons server tidak valid (HTTP ${response.status}).`
       );
-      err.isTransientOverload = response.status === 503 || response.status === 429;
-      throw err;
     }
 
     if (!response.ok || parsed?.error) {
-      const err: any = new Error(
+      throw new Error(
         parsed?.error || `Gagal memproses ${contextLabel} (HTTP ${response.status})`
       );
-      err.isTransientOverload = isTransientMessageOrStatus(response.status, parsed);
-      err.serverGroqConfigured = Boolean(parsed?.serverGroqConfigured);
-      err.serverOpenAiConfigured = Boolean(parsed?.serverOpenAiConfigured);
-      throw err;
     }
 
     return parsed;
   };
-
-  /**
-   * Unified AI Call with Strict gemini-2.5-pro Retry + Visible Automatic Failover to Groq
-   */
-  const callAiEndpointWithFailover = useCallback(
-    async (
-      bodyPayload: Record<string, any>,
-      contextLabel: string
-    ): Promise<any> => {
-      const currentSettings = backupSettingsRef.current;
-      const baseRequest = {
-        ...bodyPayload,
-        preferredModel: 'gemini-2.5-pro',
-        groqApiKey: currentSettings.groqApiKey,
-        openaiApiKey: currentSettings.openaiApiKey,
-        priorityMode: currentSettings.priorityMode,
-      };
-
-      const postJson = async (payload: Record<string, any>) => {
-        const res = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-        return parseApiResponseSafe(res, contextLabel);
-      };
-
-      if (currentSettings.priorityMode === 'force_groq') {
-        setProcessingStatusText(`Memproses ${contextLabel} via Groq (Whisper + Llama 3.3)...`);
-        return postJson({ ...baseRequest, providerStage: 'groq_failover' });
-      }
-
-      if (currentSettings.priorityMode === 'force_openai') {
-        setProcessingStatusText(`Memproses ${contextLabel} via OpenAI Cadangan...`);
-        return postJson({ ...baseRequest, providerStage: 'openai_failover' });
-      }
-
-      // Stage 1: Gemini 2.5 Pro ONLY (with server-side 2s + 4s quick retries)
-      try {
-        return await postJson({ ...baseRequest, providerStage: 'gemini_only' });
-      } catch (err: any) {
-        if (!err?.isTransientOverload) {
-          throw err;
-        }
-
-        const hasGroq = Boolean(currentSettings.groqApiKey?.trim() || err?.serverGroqConfigured);
-        const hasOpenAi = Boolean(currentSettings.openaiApiKey?.trim() || err?.serverOpenAiConfigured);
-
-        if (hasGroq) {
-          const failoverMsg = 'Gemini Pro sedang padat (503). Mengalihkan otomatis ke Groq...';
-          setProcessingStatusText(failoverMsg);
-          setApiSuccessBanner(failoverMsg);
-          return await postJson({ ...baseRequest, providerStage: 'groq_failover' });
-        }
-
-        if (hasOpenAi) {
-          const failoverMsg = 'Gemini Pro sedang padat (503). Mengalihkan otomatis ke OpenAI...';
-          setProcessingStatusText(failoverMsg);
-          setApiSuccessBanner(failoverMsg);
-          return await postJson({ ...baseRequest, providerStage: 'openai_failover' });
-        }
-
-        throw new Error(
-          'Gemini Pro sedang padat (503 High Demand) dan Groq API Key cadangan belum dikonfigurasi di Pengaturan (⚙).'
-        );
-      }
-    },
-    []
-  );
 
   /**
    * Cross-Modal Fusion & Real-Time Re-Synchronization Engine:
@@ -578,18 +381,26 @@ export default function App() {
 
       setIsCrossModalSyncing(true);
       try {
-        const fused = (await callAiEndpointWithFailover(
-          {
+        const response = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
             mode: 'cross_modal_fusion',
             unifiedContext,
             metadata: activeMeta,
-          },
+          }),
+        });
+
+        const fused = (await parseApiResponseSafe(
+          response,
           'Cross-Modal Fusion'
         )) as MeetingReportResult;
 
         const now = new Date();
         const currentIso = getTodayIsoDate(now);
-        const chronologicalMerged = mergeChronologicalTranscripts(activeChunks);
 
         // Apply fused metadata & report unless manual edit lock is active
         if (!isManualEditLockedRef.current || forceUnlockManualEdit) {
@@ -631,9 +442,7 @@ export default function App() {
                 ? fused.actionItems
                 : prev.actionItems,
             cleanTranscript:
-              chronologicalMerged ||
-              fused.cleanTranscript?.trim() ||
-              prev.cleanTranscript,
+              fused.cleanTranscript?.trim() || prev.cleanTranscript,
           }));
         }
       } catch (err: any) {
@@ -642,7 +451,7 @@ export default function App() {
         setIsCrossModalSyncing(false);
       }
     },
-    [callAiEndpointWithFailover]
+    []
   );
 
   // Routes a newly captured photo through Gemini Vision using current session context & triggers Auto-Sync
@@ -659,14 +468,23 @@ export default function App() {
         )
         .map((p) => p.extractedText!);
 
-      const result = (await callAiEndpointWithFailover(
-        {
+      const response = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
           mode: 'autonomous_vision',
           imageDataUrl: cleanDataUrl,
           overrideCategory,
           paparanKnowledge: currentSessionPaparan,
           metadata: currentMeta,
-        },
+        }),
+      });
+
+      const result = (await parseApiResponseSafe(
+        response,
         'Autonomous Vision Router'
       )) as VisionRouterResponse;
 
@@ -980,28 +798,8 @@ export default function App() {
     setApiError(null);
     setApiSuccessBanner(null);
 
-    const currentMeta = metadataRef.current;
-    const meetingId = `meeting_${Date.now()}`;
-    const bundleRecord: MeetingBundleRecord = {
-      id: meetingId,
-      savedAt: new Date().toISOString(),
-      metadata: currentMeta,
-      chunks: targetChunks.map((c) => ({
-        id: c.id,
-        index: c.index,
-        blob: c.blob,
-        mimeType: c.mimeType,
-        timestampLabel: c.timestampLabel,
-        durationSec: c.durationSec,
-        sizeBytes: c.sizeBytes,
-      })),
-      photos: capturedPhotosRef.current,
-      status: 'analyzing',
-    };
-
     try {
-      await saveMeetingBundle(bundleRecord);
-      loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
+      const currentMeta = metadataRef.current;
 
       const currentSessionPaparanKnowledge = capturedPhotosRef.current
         .filter((p) => p.category === 'MATERI_PAPARAN' && p.extractedText)
@@ -1051,8 +849,13 @@ export default function App() {
             : screenFrames.slice(-3)),
         ].slice(0, 4);
 
-        const data = (await callAiEndpointWithFailover(
-          {
+        const response = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
             mode: 'single',
             audioBase64,
             mimeType: chunk.mimeType,
@@ -1062,7 +865,11 @@ export default function App() {
             metadata: currentMeta,
             chunkIndex: i,
             totalChunks: updatedChunksList.length,
-          },
+          }),
+        });
+
+        const data = (await parseApiResponseSafe(
+          response,
           `Segmen Suara #${i + 1}`
         )) as MeetingReportResult;
 
@@ -1084,9 +891,6 @@ export default function App() {
         );
       }
 
-      // Merge all segment transcripts chronologically
-      const mergedTranscript = mergeChronologicalTranscripts(updatedChunksList);
-
       // Now execute Unified Cross-Modal Fusion across all audio segments + OCR_UNDANGAN + MATERI_PAPARAN
       setProcessingStatusText(
         'Fusi Lintas-Modal (Suara + OCR Undangan + Slide Paparan)...'
@@ -1098,37 +902,23 @@ export default function App() {
         metadataRef.current
       );
 
-      const finalResult = (await callAiEndpointWithFailover(
-        {
+      const fusionResponse = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
           mode: 'cross_modal_fusion',
           unifiedContext,
           metadata: metadataRef.current,
-        },
+        }),
+      });
+
+      const finalResult = (await parseApiResponseSafe(
+        fusionResponse,
         'Cross-Modal Fusion'
       )) as MeetingReportResult;
-
-      const resolvedCleanTranscript =
-        mergedTranscript || finalResult.cleanTranscript || '';
-
-      const finalizedReport: MeetingReportResult = {
-        judulKegiatan: finalResult.judulKegiatan,
-        hariTanggal: finalResult.hariTanggal,
-        pukul: finalResult.pukul,
-        pimpinanRapat: finalResult.pimpinanRapat,
-        pesertaRapat: finalResult.pesertaRapat,
-        tempat: finalResult.tempat,
-        isiKegiatan: finalResult.isiKegiatan || '',
-        executiveSummary: finalResult.executiveSummary || '',
-        actionItems: Array.isArray(finalResult.actionItems)
-          ? finalResult.actionItems
-          : [],
-        cleanTranscript: resolvedCleanTranscript,
-      };
-
-      bundleRecord.status = 'completed';
-      bundleRecord.report = finalizedReport;
-      await saveMeetingBundle(bundleRecord);
-      loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
 
       const now = new Date();
       const currentIso = getTodayIsoDate(now);
@@ -1160,26 +950,29 @@ export default function App() {
       }));
 
       if (!isManualEditLockedRef.current) {
-        setReport(finalizedReport);
+        setReport({
+          judulKegiatan: finalResult.judulKegiatan,
+          hariTanggal: finalResult.hariTanggal,
+          pukul: finalResult.pukul,
+          pimpinanRapat: finalResult.pimpinanRapat,
+          pesertaRapat: finalResult.pesertaRapat,
+          tempat: finalResult.tempat,
+          isiKegiatan: finalResult.isiKegiatan || '',
+          executiveSummary: finalResult.executiveSummary || '',
+          actionItems: Array.isArray(finalResult.actionItems)
+            ? finalResult.actionItems
+            : [],
+          cleanTranscript: finalResult.cleanTranscript || '',
+        });
       }
 
       setApiSuccessBanner(
         `Fusi Lintas-Modal Selesai: ${updatedChunksList.length} Segmen Suara + ${
           capturedPhotosRef.current.filter((p) => p.status === 'done').length
-        } Pindaian Gambar & Transkrip Utuh Gabungan siap disalin!`
+        } Pindaian Gambar telah disinkronkan!`
       );
     } catch (err: any) {
-      const errorMsg = err?.message || '503 High Demand / Server AI Sibuk';
-      bundleRecord.status = 'failed_retryable';
-      bundleRecord.lastError = errorMsg;
-      try {
-        await saveMeetingBundle(bundleRecord);
-        loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
-      } catch {}
-
-      setApiError(
-        `${errorMsg} — Seluruh audio & foto telah diamankan di Brankas Lokal (IndexedDB). Buka "Rapat Tersimpan" untuk Coba Analisis Ulang atau lengkapi Groq API Key di Pengaturan (⚙).`
-      );
+      setApiError(err?.message || 'Gagal memproses rekaman rapat.');
       setChunks((prev) =>
         prev.map((c) => (c.status === 'processing' ? { ...c, status: 'error' } : c))
       );
@@ -1231,25 +1024,6 @@ export default function App() {
       document.body.removeChild(textarea);
       setCopiedWA(true);
       setTimeout(() => setCopiedWA(false), 2500);
-    }
-  };
-
-  const handleCopyTranscript = async () => {
-    const textToCopy = report.cleanTranscript?.trim() || '';
-    if (!textToCopy) return;
-    try {
-      await navigator.clipboard.writeText(textToCopy);
-      setCopiedTranscript(true);
-      setTimeout(() => setCopiedTranscript(false), 2500);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = textToCopy;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopiedTranscript(true);
-      setTimeout(() => setCopiedTranscript(false), 2500);
     }
   };
 
@@ -1463,15 +1237,6 @@ export default function App() {
           <div className="flex items-center gap-1.5 shrink-0">
             <KomlekOmegaEmblem className="hidden sm:block w-10 h-10" />
 
-            <button
-              type="button"
-              onClick={() => setShowSettingsModal(true)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-white border border-slate-700 cursor-pointer transition-all shadow"
-              title="Pengaturan API Cadangan (Groq / OpenAI Failover)"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-
             {/* Dedicated Tactical Red EXIT Button in Top-Right Header */}
             <button
               type="button"
@@ -1485,7 +1250,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Model AI Dropdown + Rapat Tersimpan + Install App PWA + Open Fullscreen Camera) */}
+        {/* Top Tactical Session Control Bar (Sesi Baru / Reset Data + Install App PWA + Open Fullscreen Camera) */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 bg-[#111827] border border-[#1E293B] rounded-xl px-2.5 py-1.5">
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
@@ -1496,38 +1261,6 @@ export default function App() {
             >
               <RotateCcw className="w-3.5 h-3.5 text-red-400" />
               <span>Sesi Baru / Reset</span>
-            </button>
-
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">Engine AI:</span>
-              <select
-                value={backupSettings.priorityMode}
-                onChange={(e) =>
-                  setBackupSettings((prev) => ({
-                    ...prev,
-                    priorityMode: e.target.value as BackupAiSettings['priorityMode'],
-                  }))
-                }
-                className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-amber-300 font-bold outline-none cursor-pointer"
-                title="Mesin Utama: Gemini 2.5 Pro dengan Auto-Failover ke Groq saat 503"
-              >
-                <option value="automatic">gemini-2.5-pro → Auto Groq</option>
-                <option value="force_groq">Groq Langsung (Whisper + Llama 3.3)</option>
-                <option value="force_openai">OpenAI Cadangan (GPT-4o-mini)</option>
-              </select>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
-                setShowSavedBundlesModal(true);
-              }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-sky-300 hover:text-white text-[11px] font-bold tracking-wide transition-all cursor-pointer"
-              title="Buka daftar rapat tersimpan di IndexedDB (Pemulihan darurat 503)"
-            >
-              <Archive className="w-3.5 h-3.5 text-sky-400" />
-              <span>Rapat Tersimpan ({savedMeetingBundles.length})</span>
             </button>
 
             <PWAInstallButton />
@@ -1859,52 +1592,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-
-              {/* Dedicated Panel: Transkrip Utuh Gabungan (Chronologically Merged Across All Segments) */}
-              <div className="bg-[#0B1120] border border-slate-800 rounded-lg p-2 space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-1.5">
-                  <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#38BDF8] uppercase tracking-wider">
-                    <ScrollText className="w-3.5 h-3.5 shrink-0" />
-                    <span>Transkrip Utuh Gabungan</span>
-                    <span className="text-[9px] font-mono text-slate-400 font-normal">
-                      ({syncedAudioCount}/{chunks.length} Segmen)
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleCopyTranscript}
-                    disabled={!report.cleanTranscript?.trim()}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-600 text-[10px] font-bold text-slate-100 cursor-pointer transition-colors"
-                    title="Salin seluruh Transkrip Utuh Gabungan ke clipboard"
-                  >
-                    {copiedTranscript ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span className="text-emerald-300">Tersalin!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3 text-[#38BDF8]" />
-                        <span>Salin Transkrip</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <textarea
-                  rows={5}
-                  value={report.cleanTranscript}
-                  onChange={(e) =>
-                    setReport((prev) => ({
-                      ...prev,
-                      cleanTranscript: e.target.value,
-                    }))
-                  }
-                  placeholder="Transkrip kronologis gabungan dari seluruh segmen rekaman suara akan muncul otomatis di sini setelah analisis AI selesai..."
-                  className="w-full bg-[#111827] border border-slate-800 focus:border-[#38BDF8] focus:outline-none rounded-md p-2 text-[11px] text-slate-200 leading-relaxed resize-y font-sans placeholder:text-slate-500"
-                />
-              </div>
             </section>
           </div>
         </div>
@@ -1972,225 +1659,6 @@ export default function App() {
           </button>
         </footer>
       </div>
-
-      {/* Saved Meeting Bundles Modal (IndexedDB Vault Recovery for 503 / High Demand) */}
-      {showSavedBundlesModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-gradient-to-b from-[#162E4D] to-[#0B1120] border-2 border-sky-500/60 rounded-2xl p-4 sm:p-6 w-full max-w-lg shadow-2xl text-white max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/80 mb-3">
-              <div className="flex items-center gap-2">
-                <Archive className="w-5 h-5 text-sky-400" />
-                <h3 className="text-sm sm:text-base font-extrabold tracking-wider uppercase">
-                  Brankas Rapat Tersimpan (IndexedDB Vault)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSavedBundlesModal(false)}
-                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300 mb-3">
-              Seluruh rekaman audio dan foto sesi rapat disimpan secara lokal di perangkat sebelum dikirim ke AI. Jika terjadi lonjakan 503 (High Demand), data tidak akan hilang dan dapat dianalisis ulang kapan saja.
-            </p>
-
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-              {savedMeetingBundles.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 text-xs italic">
-                  Belum ada rapat tersimpan di brankas lokal.
-                </div>
-              ) : (
-                savedMeetingBundles.map((bundle) => (
-                  <div
-                    key={bundle.id}
-                    className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-3 flex flex-col gap-2 shadow-inner"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="text-xs sm:text-sm font-extrabold text-amber-300 uppercase">
-                          {bundle.metadata.judulKegiatan || 'Rapat Tanpa Judul'}
-                        </h4>
-                        <p className="text-[10px] text-slate-400">
-                          {bundle.metadata.hariTanggal || new Date(bundle.savedAt).toLocaleString()} • {bundle.chunks.length} Segmen Audio • {bundle.photos.length} Foto
-                        </p>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                        bundle.status === 'completed'
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                          : bundle.status === 'failed_retryable'
-                          ? 'bg-red-950 text-red-300 border border-red-700 animate-pulse'
-                          : 'bg-amber-950 text-amber-300 border border-amber-700'
-                      }`}>
-                        {bundle.status}
-                      </span>
-                    </div>
-
-                    {bundle.lastError && (
-                      <p className="text-[10px] text-red-300 bg-red-950/60 p-1.5 rounded border border-red-800/60 font-mono">
-                        Error: {bundle.lastError}
-                      </p>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => handleRetryBundleAnalysis(bundle)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-[11px] font-extrabold tracking-wide cursor-pointer shadow"
-                      >
-                        <RefreshCw className="w-3 h-3 animate-spin-slow" />
-                        <span>Coba Analisis Ulang</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadBundleFiles(bundle)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white text-[11px] font-bold tracking-wide cursor-pointer border border-slate-600"
-                      >
-                        <FileText className="w-3 h-3" />
-                        <span>Unduh Audio & Foto</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await deleteMeetingBundle(bundle.id);
-                          const updated = await loadAllMeetingBundles();
-                          setSavedMeetingBundles(updated);
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-950/60 hover:bg-red-900 text-red-300 hover:text-white text-[11px] font-bold tracking-wide cursor-pointer ml-auto border border-red-900"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="pt-3 border-t border-slate-700/80 mt-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowSavedBundlesModal(false)}
-                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
-              >
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Pengaturan API Cadangan Modal (Groq & OpenAI Failover Settings) */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-gradient-to-b from-[#162E4D] to-[#0B1120] border-2 border-amber-500/60 rounded-2xl p-4 sm:p-6 w-full max-w-lg shadow-2xl text-white max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/80 mb-3">
-              <div className="flex items-center gap-2">
-                <Settings className="w-5 h-5 text-amber-400" />
-                <h3 className="text-sm sm:text-base font-extrabold tracking-wider uppercase">
-                  Pengaturan API Cadangan (Groq / OpenAI Failover)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300 mb-4">
-              Konfigurasikan kunci API cadangan (Groq atau OpenAI). Jika Gemini mengalami lonjakan 503 (High Demand), AEGIS-BRIEF akan secara otomatis mengalihkan proses transkripsi suara (Whisper) dan analisis teks ke mesin cadangan pilihan Anda.
-            </p>
-
-            <div className="flex-1 overflow-y-auto space-y-3.5 pr-1">
-              <div>
-                <label className="block text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">
-                  Mode Prioritas &amp; Failover
-                </label>
-                <select
-                  value={backupSettings.priorityMode}
-                  onChange={(e) =>
-                    setBackupSettings((prev) => ({
-                      ...prev,
-                      priorityMode: e.target.value as any,
-                    }))
-                  }
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white outline-none focus:border-amber-500 cursor-pointer"
-                >
-                  <option value="automatic">Otomatis (Gemini dulu, lalu Groq/OpenAI saat 503)</option>
-                  <option value="force_groq">Paksa Langsung ke Groq (Llama 3.3 + Whisper)</option>
-                  <option value="force_openai">Paksa Langsung ke OpenAI (GPT-4o-mini + Whisper)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Groq API Key (Opsional)
-                </label>
-                <input
-                  type="password"
-                  value={backupSettings.groqApiKey}
-                  onChange={(e) =>
-                    setBackupSettings((prev) => ({
-                      ...prev,
-                      groqApiKey: e.target.value,
-                    }))
-                  }
-                  placeholder="gsk_..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder:text-slate-600 outline-none focus:border-amber-500"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Digunakan untuk transkripsi kilat whisper-large-v3-turbo dan analisis llama-3.3-70b-versatile.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  OpenAI API Key (Opsional)
-                </label>
-                <input
-                  type="password"
-                  value={backupSettings.openaiApiKey}
-                  onChange={(e) =>
-                    setBackupSettings((prev) => ({
-                      ...prev,
-                      openaiApiKey: e.target.value,
-                    }))
-                  }
-                  placeholder="sk-proj-..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder:text-slate-600 outline-none focus:border-amber-500"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Digunakan untuk transkripsi whisper-1 dan fusi multimodal gpt-4o-mini.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-slate-700/80 mt-4 flex justify-between items-center">
-              <span className="text-[10px] text-emerald-300 font-medium">
-                {backupSettings.groqApiKey || backupSettings.openaiApiKey
-                  ? '✓ Kunci cadangan aktif & tersimpan lokal'
-                  : '⚠️ Belum ada kunci cadangan (mengandalkan Gemini)'}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setApiSuccessBanner('Pengaturan API Cadangan berhasil disimpan.');
-                  setShowSettingsModal(false);
-                }}
-                className="px-4 py-2 rounded-xl bg-gradient-to-b from-[#F59E0B] to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold tracking-wider uppercase shadow cursor-pointer"
-              >
-                Simpan &amp; Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

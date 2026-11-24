@@ -128,11 +128,9 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
 
     const videoEl = videoRef.current;
     if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-      const maxWidth = 1280;
-      const scale = Math.min(1, maxWidth / videoEl.videoWidth);
       const canvas = document.createElement('canvas');
-      canvas.width = Math.round(videoEl.videoWidth * scale);
-      canvas.height = Math.round(videoEl.videoHeight * scale);
+      canvas.width = videoEl.videoWidth;
+      canvas.height = videoEl.videoHeight;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         if (facingMode === 'user') {
@@ -140,7 +138,7 @@ export const FullscreenCameraModal: React.FC<FullscreenCameraModalProps> = ({
           ctx.scale(-1, 1);
         }
         ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
 
         setShutterFlash(true);
         setTimeout(() => setShutterFlash(false), 180);
