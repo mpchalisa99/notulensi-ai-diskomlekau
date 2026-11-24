@@ -222,7 +222,7 @@ function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: s
   };
 }
 
-async function callGeminiWithSchemaFallback(
+async function callGeminiWithRetryAndFallback(
   ai: GoogleGenAI,
   contents: any,
   systemInstruction: string,
@@ -232,50 +232,60 @@ async function callGeminiWithSchemaFallback(
     { name: 'gemini-2.5-flash', useLowThinking: false },
     { name: 'gemini-3.1-flash-lite', useLowThinking: false },
     { name: 'gemini-3.8-flash', useLowThinking: false },
+    { name: 'gemini-2.0-flash', useLowThinking: false },
     { name: 'gemini-4-hydrogen', useLowThinking: true },
   ];
+
   let lastError: unknown = null;
 
   for (const candidate of candidateModels) {
-    try {
-      const config: Record<string, any> = {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-      };
-      if (candidate.useLowThinking) {
-        config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-      }
+    const maxRetries = 4;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const config: Record<string, any> = {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+        };
+        if (candidate.useLowThinking) {
+          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+        }
 
-      const response = await ai.models.generateContent({
-        model: candidate.name,
-        contents,
-        config,
-      });
-      return response;
-    } catch (err: any) {
-      lastError = err;
-      const msg = String(err?.message || '');
-      const status = err?.status || err?.statusCode;
-      if (
-        status === 404 ||
-        status === 429 ||
-        status === 500 ||
-        status === 502 ||
-        status === 503 ||
-        status === 504 ||
-        msg.includes('404') ||
-        msg.includes('503') ||
-        msg.includes('UNAVAILABLE') ||
-        msg.includes('high demand') ||
-        msg.includes('NOT_FOUND') ||
-        msg.includes('not found') ||
-        msg.includes('no longer available') ||
-        msg.includes('not supported')
-      ) {
-        continue;
+        const response = await ai.models.generateContent({
+          model: candidate.name,
+          contents,
+          config,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || '');
+        const status = err?.status || err?.statusCode;
+        const isTransient =
+          status === 429 ||
+          status === 500 ||
+          status === 502 ||
+          status === 503 ||
+          status === 504 ||
+          msg.includes('429') ||
+          msg.includes('503') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('high demand') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('timeout');
+
+        if (isTransient && attempt < maxRetries) {
+          const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        if (isTransient && attempt === maxRetries) {
+          break; // Try next model candidate
+        }
+
+        throw err;
       }
-      throw err;
     }
   }
   throw lastError;
@@ -353,7 +363,7 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
 Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini secara mendalam.${slideKnowledgeStr}
 Glosarium Istilah: ${glossaryHint}`;
 
-      const response = await callGeminiWithSchemaFallback(
+      const response = await callGeminiWithRetryAndFallback(
         ai,
         {
           parts: [
@@ -414,7 +424,7 @@ Instruksi Wajib:
   * Poin Terakhir: Implikasi Operasional & Keputusan Pimpinan (dampak kesiapan TNI AU, direktif pimpinan, deadline, dan PIC).
 - Pisahkan SETIAP poin bernomor dengan baris kosong eksplisit (\\n\\n).`;
 
-      const response = await callGeminiWithSchemaFallback(
+      const response = await callGeminiWithRetryAndFallback(
         ai,
         fusionPrompt,
         SYSTEM_INSTRUCTION,
@@ -451,7 +461,7 @@ ${JSON.stringify(previousSummaries, null, 2)}${ocrContextStr}${slideContextStr}$
 
 Istilah Khusus (Glossary): ${glossaryHint}`;
 
-      const response = await callGeminiWithSchemaFallback(
+      const response = await callGeminiWithRetryAndFallback(
         ai,
         combinedPrompt,
         SYSTEM_INSTRUCTION,
@@ -525,7 +535,7 @@ Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${ocrContextStr}${s
 Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin: Poin 1 Latar Belakang & Rujukan; Poin Tengah Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan; Poin Terakhir Implikasi Operasional & Keputusan Pimpinan) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Hasilkan JSON lengkap sesuai skema.`,
     });
 
-    const response = await callGeminiWithSchemaFallback(
+    const response = await callGeminiWithRetryAndFallback(
       ai,
       { parts },
       SYSTEM_INSTRUCTION,
