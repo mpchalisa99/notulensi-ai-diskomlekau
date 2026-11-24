@@ -36,8 +36,9 @@ interface AudioRecorderProps {
   registerStopRecordingRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
-const CHUNK_DURATION_MS = 10 * 60 * 1000;
+const CHUNK_DURATION_MS = 12 * 60 * 1000;
 const AUTO_SCREENSHOT_INTERVAL_MS = 15 * 60 * 1000;
+const MAX_LIVE_CHUNK_BYTES = 18 * 1024 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({
@@ -482,10 +483,24 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     const recorder = new MediaRecorder(stream, options);
     const localBlobParts: BlobPart[] = [];
     const thisChunkStartSec = elapsedSecondsRef.current;
+    let accumulatedBytes = 0;
+    let sizeSplitTriggered = false;
 
     recorder.ondataavailable = (event: BlobEvent) => {
       if (event.data && event.data.size > 0) {
         localBlobParts.push(event.data);
+        accumulatedBytes += event.data.size;
+
+        // Auto-split at 18 MB during live recording to stay safely under 25 MB limit
+        if (
+          accumulatedBytes >= MAX_LIVE_CHUNK_BYTES &&
+          !sizeSplitTriggered &&
+          mediaRecorderRef.current === recorder &&
+          recorder.state === 'recording'
+        ) {
+          sizeSplitTriggered = true;
+          rotateChunk();
+        }
       }
     };
 
@@ -520,6 +535,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             onProcessWithAI([...chunksRef.current, newChunk]);
           }, 250);
         }
+      } else if (autoProcessOnStopRef.current && chunksRef.current.length > 0) {
+        setTimeout(() => {
+          onProcessWithAI([...chunksRef.current]);
+        }, 250);
       }
     };
 
@@ -534,7 +553,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (!currentRecorder || !dest || currentRecorder.state === 'inactive') return;
 
     captureFrameFromDisplayTrack();
-    autoProcessOnStopRef.current = true;
+    // Save chunk silently to IndexedDB without interrupting the live meeting until Finish/Stop is pressed
+    autoProcessOnStopRef.current = false;
     const mimeType = currentRecorder.mimeType || getSupportedMimeType();
     currentRecorder.stop();
     setCurrentChunkNumber((prev) => prev + 1);
@@ -859,6 +879,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               VAULT ({vaultSavedCount})
             </span>
           )}
+          <span
+            className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800/90 text-slate-300 border border-slate-700"
+            title="Auto-chunking per 12 menit / 18 MB (rekam) & 3 MB (upload) — aman <25 MB"
+          >
+            AUTO-SPLIT 12m/18MB
+          </span>
         </div>
 
         <div className="flex items-center gap-1">

@@ -263,3 +263,17 @@ export function blobToBase64(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
+
+/**
+ * Merges all processed audio chunk transcripts chronologically into a single unified transcript.
+ */
+export function mergeChronologicalTranscripts(chunks: AudioChunkItem[]): string {
+  const sorted = [...chunks].sort((a, b) => a.index - b.index);
+  const parts = sorted
+    .filter((c) => Boolean(c.transcript && c.transcript.trim()))
+    .map((c, idx) => {
+      const label = c.timestampLabel?.trim() || `Segmen ${idx + 1}`;
+      return `[Segmen ${idx + 1} • ${label}]\n${c.transcript!.trim()}`;
+    });
+  return parts.join('\n\n');
+}

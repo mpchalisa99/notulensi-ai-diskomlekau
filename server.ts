@@ -3,7 +3,7 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,42 +55,42 @@ const VISION_ROUTER_SCHEMA = {
     judulKegiatan: {
       type: Type.STRING,
       description:
-        'Judul kegiatan/rapat yang tertulis pada surat undangan atau slide. Kosongkan ("") jika tidak ada.',
+        'Judul kegiatan/rapat yang tertulis pada foto/undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     hariTanggal: {
       type: Type.STRING,
       description:
-        'Hari dan tanggal pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+        'Hari dan tanggal pelaksanaan yang tertulis pada foto/undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pukul: {
       type: Type.STRING,
       description:
-        'Waktu/jam pelaksanaan yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+        'Waktu/jam pelaksanaan yang tertulis pada foto/undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     tempat: {
       type: Type.STRING,
       description:
-        'Tempat pelaksanaan rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+        'Tempat pelaksanaan rapat yang tertulis pada foto/undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pimpinanRapat: {
       type: Type.STRING,
       description:
-        'Nama/jabatan Pimpinan Rapat yang tertulis pada surat undangan/slide. Kosongkan ("") jika tidak ada.',
+        'Nama/jabatan Pimpinan Rapat yang tertulis pada foto/undangan/slide. Kosongkan ("") jika tidak ada.',
     },
     pesertaRapat: {
       type: Type.STRING,
       description:
-        'Daftar peserta rapat/undangan yang tertulis pada surat undangan/daftar hadir. Kosongkan ("") jika tidak ada.',
+        'Daftar peserta rapat/undangan yang tertulis pada foto/undangan/daftar hadir. Kosongkan ("") jika tidak ada.',
     },
     extractedKnowledge: {
       type: Type.STRING,
       description:
-        'Substansi strategis mendalam, spesifikasi teknis, parameter kuantitatif, tabel, dan angka yang diekstrak dari foto ini dalam bahasa dinas TNI AU yang analitis (3-5 kalimat rinci).',
+        'Substansi mendalam, fakta, metrik, spesifikasi, tabel, dan angka yang benar-benar tertulis/terlihat pada foto ini (3-5 kalimat rinci, tanpa mengarang jika tidak terlihat).',
     },
     isiKegiatanDraft: {
       type: Type.STRING,
       description:
-        'Draf isi kegiatan analitis mendalam staf TNI AU yang disusun dalam poin-poin bernomor (1., 2., 3., dst.) dengan pemisah baris kosong ganda (\\n\\n).',
+        'Draf isi kegiatan analitis mendalam yang hanya bersumber pada fakta terlihat di foto, disusun dalam poin-poin bernomor (1., 2., 3., dst.) dengan pemisah baris kosong ganda (\\n\\n). Kosongkan ("") jika hanya foto situasi tanpa teks.',
     },
   },
   required: ['category', 'confidenceReason', 'extractedKnowledge', 'isiKegiatanDraft'],
@@ -102,58 +102,60 @@ const REPORT_RESPONSE_SCHEMA = {
     judulKegiatan: {
       type: Type.STRING,
       description:
-        'Judul kegiatan atau topik utama rapat yang diselaraskan dari OCR_UNDANGAN, MATERI_PAPARAN, dan rekaman suara sesi ini.',
+        'Judul kegiatan atau topik utama rapat yang benar-benar terverifikasi dari audio, OCR_UNDANGAN, atau MATERI_PAPARAN. Kosongkan ("") jika tidak diketahui.',
     },
     hariTanggal: {
       type: Type.STRING,
       description:
-        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia jika disebutkan pada undangan atau rekaman.',
+        'Hari dan tanggal pelaksanaan rapat dalam Bahasa Indonesia jika disebutkan pada undangan atau rekaman. Kosongkan ("") jika tidak disebutkan.',
     },
     pukul: {
       type: Type.STRING,
-      description: 'Waktu/jam pelaksanaan rapat jika disebutkan.',
+      description: 'Waktu/jam pelaksanaan rapat jika disebutkan. Kosongkan ("") jika tidak disebutkan.',
     },
     pimpinanRapat: {
       type: Type.STRING,
       description:
-        'Nama atau jabatan Pimpinan Rapat dengan ejaan resmi yang dikoreksi berdasarkan OCR_UNDANGAN / MATERI_PAPARAN.',
+        'Nama atau jabatan Pimpinan Rapat yang benar-benar disebutkan/tertulis di audio atau tangkapan kamera. Kosongkan ("") jika tidak diketahui.',
     },
     pesertaRapat: {
       type: Type.STRING,
-      description: 'Daftar peserta rapat atau satuan yang hadir dalam sesi ini.',
+      description:
+        'Daftar peserta rapat atau pihak/satuan yang benar-benar hadir/disebutkan. Kosongkan ("") jika tidak diketahui.',
     },
     tempat: {
       type: Type.STRING,
-      description: 'Tempat pelaksanaan rapat yang terdeteksi dalam sesi ini.',
+      description:
+        'Tempat pelaksanaan rapat yang benar-benar terdeteksi dalam sesi ini. Kosongkan ("") jika tidak diketahui.',
     },
     isiKegiatan: {
       type: Type.STRING,
       description:
-        'Isi laporan rapat hasil penalaran analitis mendalam Perwira Staf TNI AU (Cross-Modal Fusion antara transkrip audio dan teks slide paparan) yang disusun dalam poin-poin bernomor tematis (1., 2., 3., dst.) dengan setiap poin berisi 3-5 kalimat komprehensif, dipisahkan oleh baris kosong eksplisit (\\n\\n).',
+        'Isi laporan rapat hasil penalaran analitis mendalam (Cross-Modal Fusion antara audio dan tangkapan kamera) yang disusun dalam poin-poin bernomor tematis (1., 2., 3., dst.) berisi fakta terverifikasi (3-5 kalimat komprehensif per poin), dipisahkan oleh baris kosong eksplisit (\\n\\n).',
     },
     executiveSummary: {
       type: Type.STRING,
       description:
-        'Ringkasan eksekutif strategis 3-4 kalimat padat, tajam, dan mendalam yang merangkum substansi teknis, parameter alutsista, kendala operasional, dan keputusan komando pada sesi ini.',
+        'Ringkasan eksekutif strategis 3-4 kalimat padat, tajam, dan mendalam yang merangkum substansi inti, data/bukti yang disajikan, kendala, dan keputusan nyata pada sesi ini.',
     },
     actionItems: {
       type: Type.ARRAY,
       description:
-        'Daftar tindak lanjut (Action Items) hasil rekonsiliasi direktif pimpinan pada audio dengan tabel/target pada slide MATERI_PAPARAN.',
+        'Daftar tindak lanjut (Action Items) yang secara eksplisit diputuskan dalam audio atau slide. Kembalikan [] jika tidak ada.',
       items: {
         type: Type.OBJECT,
         properties: {
           task: {
             type: Type.STRING,
-            description: 'Uraian tugas / tindak lanjut teknis yang harus dikerjakan.',
+            description: 'Uraian tugas / tindak lanjut yang harus dikerjakan.',
           },
           pic: {
             type: Type.STRING,
-            description: 'Penanggung jawab / satuan / personel pelaksana (PIC).',
+            description: 'Penanggung jawab / pelaksana (PIC). Kosongkan ("") jika tidak disebut.',
           },
           deadline: {
             type: Type.STRING,
-            description: 'Batas waktu pelaksanaan / target penyelesaian.',
+            description: 'Batas waktu pelaksanaan / target penyelesaian. Kosongkan ("") jika tidak disebut.',
           },
         },
         required: ['task', 'pic', 'deadline'],
@@ -162,7 +164,7 @@ const REPORT_RESPONSE_SCHEMA = {
     cleanTranscript: {
       type: Type.STRING,
       description:
-        'Transkrip kronologis yang telah dibersihkan dari basa-basi, dinormalisasi ejaan istilah militernya (mengacu pada OCR_UNDANGAN & MATERI_PAPARAN), dan diterjemahkan ke bahasa dinas TNI AU.',
+        'Transkrip kronologis yang bersih dari basa-basi, mempertahankan seluruh fakta, angka, dan pernyataan penting sesuai urutan waktu audio.',
     },
   },
   required: [
@@ -177,7 +179,7 @@ const REPORT_RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis Mendalam & Rekonsiliasi Data Taktis AEGIS-BRIEF yang bekerja dengan ketajaman penalaran **Executive Staff Analytical Reasoning**.
+const SYSTEM_INSTRUCTION = `Anda adalah Mesin Sintesis Analitis Mendalam & Rekonsiliasi Data AEGIS-BRIEF yang bekerja dengan ketajaman penalaran **Executive Staff Analytical Reasoning**.
 
 I. SUBSTANCE-FIRST & DOMAIN-AGNOSTIC FOCUS:
 1. DOMAIN FLEXIBILITY: Do NOT force-fit, assume, or bias the analysis toward military or DISKOMLEKAU terminology if the meeting covers a different subject matter (e.g., general leadership, finance, HR, logistics, inter-agency coordination, technical engineering, or external seminars). Dynamically identify the true core subject, agenda, and domain solely from the audio and camera captures.
@@ -192,7 +194,7 @@ III. DEEP, DETAILED, PRECISE & SMART ANALYTICAL REASONING:
 Using ONLY verified evidence from audio and camera captures, structure \`isiKegiatan\` into logical, thematic numbered points (\`1.\`, \`2.\`, \`3.\`, etc.) separated by explicit double-newlines (\`\\n\\n\`), covering:
 1. Core Topic & Context: What is being discussed or presented and why it matters in this meeting.
 2. Key Evidence & Technical Details: Exact data points, metrics, mechanisms, or arguments from audio + camera captures.
-3. Problem / Root Cause / Constraints: Bottlenecks, gaps, or risks explicitly identified (leave blank if none raised).
+3. Problem / Root Cause / Constraints: Bottlenecks, gaps, or risks explicitly identified (omit if none raised).
 4. Smart Synthesis & Implications: Sharp, logical connections between points made across the session—highlighting tensions, trade-offs, or impacts strictly evidenced by the material.
 5. Decisions, Action Items & PIC: Binding conclusions, next steps, deadlines, and responsible parties explicitly stated (leave blank if not decided).
 
@@ -205,6 +207,23 @@ function normalizeAudioMimeType(rawMime?: string): string {
   if (base === 'audio/x-wav') return 'audio/wav';
   if (base === 'audio/mp3') return 'audio/mpeg';
   return base || 'audio/webm';
+}
+
+function getAudioFilenameForMime(rawMime?: string): { mimeType: string; filename: string } {
+  const mimeType = normalizeAudioMimeType(rawMime);
+  if (mimeType.includes('mp4') || mimeType.includes('m4a')) {
+    return { mimeType, filename: 'audio.m4a' };
+  }
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) {
+    return { mimeType, filename: 'audio.mp3' };
+  }
+  if (mimeType.includes('wav')) {
+    return { mimeType, filename: 'audio.wav' };
+  }
+  if (mimeType.includes('ogg')) {
+    return { mimeType, filename: 'audio.ogg' };
+  }
+  return { mimeType: 'audio/webm', filename: 'audio.webm' };
 }
 
 function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: string } {
@@ -222,15 +241,27 @@ function parseDataUrlImage(dataUrlOrBase64: string): { mimeType: string; data: s
   };
 }
 
+function safeJsonErrorString(err: unknown): string {
+  try {
+    return JSON.stringify(err) || '';
+  } catch {
+    return '';
+  }
+}
+
 function isTransientOverloadError(err: any): boolean {
-  const status = err?.status || err?.code || err?.error?.code || err?.statusCode;
-  const msg = String(err?.message || JSON.stringify(err) || '').toLowerCase();
+  const status = err?.status ?? err?.code ?? err?.error?.code ?? err?.statusCode;
+  const numericStatus = Number(status);
+  const rawMessage = String(err?.message || '');
+  const serialized = safeJsonErrorString(err);
+  const msg = `${rawMessage} ${serialized} ${String(err || '')}`.toLowerCase();
+
   return (
-    status === 503 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 504 ||
+    numericStatus === 503 ||
+    numericStatus === 429 ||
+    numericStatus === 500 ||
+    numericStatus === 502 ||
+    numericStatus === 504 ||
     msg.includes('503') ||
     msg.includes('unavailable') ||
     msg.includes('high demand') ||
@@ -241,21 +272,117 @@ function isTransientOverloadError(err: any): boolean {
   );
 }
 
-async function callGroqBackup(reqBody: any, systemInstruction: string, schema: any, groqApiKey: string) {
-  if (!groqApiKey) throw new Error('Groq API Key tidak dikonfigurasi.');
+function getSchemaInstructionsForJsonMode(mode?: string): string {
+  if (mode === 'autonomous_vision') {
+    return `Keluarkan HANYA objek JSON valid (tanpa markdown code block) dengan kunci persis berikut:
+{
+  "category": "OCR_UNDANGAN" | "MATERI_PAPARAN" | "DOKUMENTASI_KEGIATAN",
+  "confidenceReason": "Penjelasan singkat deteksi visual (maks 12 kata)",
+  "judulKegiatan": "Judul tertulis pada gambar atau \"\" jika tidak ada",
+  "hariTanggal": "Hari & tanggal tertulis pada gambar atau \"\" jika tidak ada",
+  "pukul": "Jam tertulis pada gambar atau \"\" jika tidak ada",
+  "tempat": "Tempat tertulis pada gambar atau \"\" jika tidak ada",
+  "pimpinanRapat": "Nama/jabatan pimpinan tertulis pada gambar atau \"\" jika tidak ada",
+  "pesertaRapat": "Daftar peserta tertulis pada gambar atau \"\" jika tidak ada",
+  "extractedKnowledge": "Substansi mendalam, fakta, metrik, tabel, dan angka yang benar-benar terlihat di foto (3-5 kalimat, \"\" jika tidak ada teks)",
+  "isiKegiatanDraft": "Poin bernomor (1., 2., 3.) dipisah \\n\\n hanya dari fakta terlihat di foto, atau \"\" jika foto situasi"
+}`;
+  }
+  return `Keluarkan HANYA objek JSON valid (tanpa markdown code block) dengan kunci persis berikut:
+{
+  "judulKegiatan": "Judul/topik utama rapat yang terverifikasi atau \"\" jika tidak diketahui",
+  "hariTanggal": "Hari dan tanggal pelaksanaan atau \"\" jika tidak disebutkan",
+  "pukul": "Waktu/jam pelaksanaan atau \"\" jika tidak disebutkan",
+  "pimpinanRapat": "Nama/jabatan pimpinan rapat yang terverifikasi atau \"\" jika tidak disebutkan",
+  "pesertaRapat": "Daftar peserta/pihak yang hadir atau \"\" jika tidak disebutkan",
+  "tempat": "Lokasi/media rapat yang terverifikasi atau \"\" jika tidak disebutkan",
+  "isiKegiatan": "Analisis mendalam terstruktur dalam poin bernomor (1., 2., 3., dst.) dipisahkan oleh baris kosong ganda (\\n\\n), masing-masing 3-5 kalimat padat fakta terverifikasi",
+  "executiveSummary": "Ringkasan eksekutif 3-4 kalimat padat substansi nyata",
+  "actionItems": [{ "task": "Tugas spesifik", "pic": "PIC atau \"\"", "deadline": "Target waktu atau \"\"" }],
+  "cleanTranscript": "Transkrip kronologis bersih sesuai urutan waktu (kosongkan \"\" jika tidak ada audio)"
+}`;
+}
+
+async function extractVisualTextWithGroqVision(
+  images: string[],
+  contextHint: string,
+  groqApiKey: string
+): Promise<string> {
+  const validImages = images.filter(
+    (img) => typeof img === 'string' && img.startsWith('data:image/') && img.length > 50
+  );
+  if (validImages.length === 0) return '';
+
+  const contentParts: any[] = validImages.slice(0, 4).map((url) => ({
+    type: 'image_url',
+    image_url: { url },
+  }));
+
+  contentParts.push({
+    type: 'text',
+    text: `Ekstrak secara presisi dan menyeluruh seluruh teks, judul, tanggal, waktu, lokasi, nama/jabatan, angka, tabel, poin slide, grafik, atau keterangan visual yang benar-benar terlihat pada gambar ini.
+Tentukan juga jenis konten gambar (apakah surat undangan/daftar hadir, slide paparan/papan tulis/dokumen, atau foto dokumentasi situasi).
+Jangan mengarang atau menebak informasi yang tidak terlihat.
+${contextHint}`,
+  });
+
+  const visionRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${groqApiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Anda adalah OCR & Visual Extractor presisi tinggi. Ekstrak hanya teks dan fakta visual yang benar-benar terlihat di gambar tanpa halusinasi.',
+        },
+        {
+          role: 'user',
+          content: contentParts,
+        },
+      ],
+      temperature: 0.1,
+    }),
+  });
+
+  if (!visionRes.ok) {
+    const errText = await visionRes.text();
+    throw new Error(`Groq Vision Error (HTTP ${visionRes.status}): ${errText}`);
+  }
+
+  const visionJson = (await visionRes.json()) as any;
+  return (visionJson.choices?.[0]?.message?.content || '').trim();
+}
+
+async function callGroqBackup(
+  reqBody: any,
+  systemInstruction: string,
+  _schema: any,
+  groqApiKeyInput?: string
+): Promise<{ text: string; providerUsed: string }> {
+  const groqApiKey = (groqApiKeyInput || process.env.GROQ_API_KEY || '').trim();
+  if (!groqApiKey) {
+    throw new Error('Groq API Key tidak dikonfigurasi. Tambahkan di Pengaturan API Cadangan.');
+  }
+
   let transcriptText = '';
   if (reqBody.audioBase64) {
+    const { mimeType, filename } = getAudioFilenameForMime(reqBody.mimeType);
     const audioBuf = Buffer.from(reqBody.audioBase64, 'base64');
     const form = new FormData();
-    const blob = new Blob([audioBuf], { type: reqBody.mimeType || 'audio/webm' });
-    form.append('file', blob, 'audio.webm');
+    const blob = new Blob([audioBuf], { type: mimeType });
+    form.append('file', blob, filename);
     form.append('model', 'whisper-large-v3-turbo');
     form.append('language', 'id');
 
     const transcriptionRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${groqApiKey}`,
+        Authorization: `Bearer ${groqApiKey}`,
       },
       body: form as any,
     });
@@ -263,31 +390,94 @@ async function callGroqBackup(reqBody: any, systemInstruction: string, schema: a
       const errText = await transcriptionRes.text();
       throw new Error(`Groq Whisper Error (HTTP ${transcriptionRes.status}): ${errText}`);
     }
-    const transcriptionJson = await transcriptionRes.json() as any;
-    transcriptText = transcriptionJson.text || '';
+    const transcriptionJson = (await transcriptionRes.json()) as any;
+    transcriptText = (transcriptionJson.text || '').trim();
   }
 
-  const promptContent = reqBody.mode === 'cross_modal_fusion'
-    ? `Cross-Modal Fusion Request:\n${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}`
-    : reqBody.mode === 'autonomous_vision'
-    ? `Vision Router Request:\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
-    : `Transkrip Audio Sesi Rapat: ${transcriptText}\nMetadata Rapat: ${JSON.stringify(reqBody.metadata || {})}`;
+  // Extract visual content via Groq Vision whenever camera captures are present
+  let extractedVisualText = '';
+  if (reqBody.mode === 'autonomous_vision' && reqBody.imageDataUrl) {
+    const categoryHint = reqBody.overrideCategory
+      ? `Operator menginstruksikan kategori: ${reqBody.overrideCategory}.`
+      : 'Identifikasi apakah gambar berupa OCR_UNDANGAN, MATERI_PAPARAN, atau DOKUMENTASI_KEGIATAN.';
+    extractedVisualText = await extractVisualTextWithGroqVision(
+      [reqBody.imageDataUrl],
+      categoryHint,
+      groqApiKey
+    );
+  } else if (Array.isArray(reqBody.screenFrames) && reqBody.screenFrames.length > 0) {
+    try {
+      extractedVisualText = await extractVisualTextWithGroqVision(
+        reqBody.screenFrames,
+        'Gambar ini adalah slide paparan atau tangkapan kamera pendukung dari sesi rapat ini.',
+        groqApiKey
+      );
+    } catch (visionErr: any) {
+      console.warn('Groq Vision warning during audio synthesis:', visionErr?.message);
+    }
+  }
 
-  const messages: any[] = [
-    { role: 'system', content: `${systemInstruction}\n\nStrict JSON output required matching schema properties.` },
-    { role: 'user', content: promptContent }
-  ];
+  const schemaPrompt = getSchemaInstructionsForJsonMode(reqBody.mode);
+  const glossaryHint = reqBody.metadata?.customGlossary?.trim()
+    ? `Glosarium Referensi (gunakan hanya jika kata tersebut memang relevan/muncul di sumber): ${reqBody.metadata.customGlossary.trim()}`
+    : '';
+
+  let userPrompt = '';
+  if (reqBody.mode === 'cross_modal_fusion') {
+    userPrompt = `Cross-Modal Fusion Request (Fusi Data Audio + Pindaian Undangan + Materi Slide + Metadata):
+${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}
+${glossaryHint}`;
+  } else if (reqBody.mode === 'synthesize') {
+    userPrompt = `Sintesis Gabungan Segmen Rekaman & Konteks Visual:
+Ringkasan Segmen: ${JSON.stringify(reqBody.previousSummaries || [], null, 2)}
+Materi Paparan: ${JSON.stringify(reqBody.paparanKnowledge || [], null, 2)}
+OCR Undangan: ${JSON.stringify(reqBody.ocrKnowledge || [], null, 2)}
+Unified Context: ${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}
+Metadata: ${JSON.stringify(reqBody.metadata || {}, null, 2)}
+${glossaryHint}`;
+  } else if (reqBody.mode === 'autonomous_vision') {
+    userPrompt = `Autonomous Vision Router Synthesis:
+Kategori Wajib (jika ada): ${reqBody.overrideCategory || 'Deteksi Otomatis'}
+Hasil Ekstraksi Visual Groq Vision:
+${extractedVisualText || '(Tidak ada teks terbaca)'}
+
+Pengetahuan Slide Sebelumnya:
+${JSON.stringify(reqBody.paparanKnowledge || [], null, 2)}
+Metadata Sesi Saat Ini: ${JSON.stringify(reqBody.metadata || {}, null, 2)}
+${glossaryHint}`;
+  } else {
+    userPrompt = `Analisis & Transkripsi Segmen Audio (${(reqBody.chunkIndex || 0) + 1}/${reqBody.totalChunks || 1}):
+Transkrip Audio (Groq Whisper whisper-large-v3-turbo):
+${transcriptText || '(Audio tidak berisi ucapan yang dapat ditranskripsikan)'}
+
+Hasil Ekstraksi Visual Kamera/Slide (Groq Vision):
+${extractedVisualText || '(Tidak ada tangkapan gambar pada segmen ini)'}
+
+Konteks Undangan (OCR_UNDANGAN):
+${JSON.stringify(reqBody.ocrKnowledge || [], null, 2)}
+
+Konteks Slide Sebelumnya (MATERI_PAPARAN):
+${JSON.stringify(reqBody.paparanKnowledge || [], null, 2)}
+
+Metadata Rapat Saat Ini:
+${JSON.stringify(reqBody.metadata || {}, null, 2)}
+${glossaryHint}`;
+  }
 
   const chatRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${groqApiKey}`,
+      Authorization: `Bearer ${groqApiKey}`,
     },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
-      messages,
+      messages: [
+        { role: 'system', content: `${systemInstruction}\n\n${schemaPrompt}` },
+        { role: 'user', content: userPrompt },
+      ],
       response_format: { type: 'json_object' },
+      temperature: 0.15,
     }),
   });
 
@@ -296,26 +486,50 @@ async function callGroqBackup(reqBody: any, systemInstruction: string, schema: a
     throw new Error(`Groq Chat Error (HTTP ${chatRes.status}): ${errText}`);
   }
 
-  const chatJson = await chatRes.json() as any;
+  const chatJson = (await chatRes.json()) as any;
   const content = chatJson.choices?.[0]?.message?.content || '{}';
-  return { text: content };
+
+  try {
+    const parsedObj = JSON.parse(content);
+    if (reqBody.mode !== 'autonomous_vision') {
+      if (!parsedObj.cleanTranscript && transcriptText) {
+        parsedObj.cleanTranscript = transcriptText;
+      }
+      if (!Array.isArray(parsedObj.actionItems)) {
+        parsedObj.actionItems = [];
+      }
+    }
+    return { text: JSON.stringify(parsedObj), providerUsed: 'groq' };
+  } catch {
+    return { text: content, providerUsed: 'groq' };
+  }
 }
 
-async function callOpenAiBackup(reqBody: any, systemInstruction: string, schema: any, openaiApiKey: string) {
-  if (!openaiApiKey) throw new Error('OpenAI API Key tidak dikonfigurasi.');
+async function callOpenAiBackup(
+  reqBody: any,
+  systemInstruction: string,
+  _schema: any,
+  openaiApiKeyInput?: string
+): Promise<{ text: string; providerUsed: string }> {
+  const openaiApiKey = (openaiApiKeyInput || process.env.OPENAI_API_KEY || '').trim();
+  if (!openaiApiKey) {
+    throw new Error('OpenAI API Key tidak dikonfigurasi.');
+  }
+
   let transcriptText = '';
   if (reqBody.audioBase64) {
+    const { mimeType, filename } = getAudioFilenameForMime(reqBody.mimeType);
     const audioBuf = Buffer.from(reqBody.audioBase64, 'base64');
     const form = new FormData();
-    const blob = new Blob([audioBuf], { type: reqBody.mimeType || 'audio/webm' });
-    form.append('file', blob, 'audio.webm');
+    const blob = new Blob([audioBuf], { type: mimeType });
+    form.append('file', blob, filename);
     form.append('model', 'whisper-1');
     form.append('language', 'id');
 
     const transcriptionRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${openaiApiKey}`,
+        Authorization: `Bearer ${openaiApiKey}`,
       },
       body: form as any,
     });
@@ -323,31 +537,45 @@ async function callOpenAiBackup(reqBody: any, systemInstruction: string, schema:
       const errText = await transcriptionRes.text();
       throw new Error(`OpenAI Whisper Error (HTTP ${transcriptionRes.status}): ${errText}`);
     }
-    const transcriptionJson = await transcriptionRes.json() as any;
-    transcriptText = transcriptionJson.text || '';
+    const transcriptionJson = (await transcriptionRes.json()) as any;
+    transcriptText = (transcriptionJson.text || '').trim();
   }
 
-  const promptContent = reqBody.mode === 'cross_modal_fusion'
-    ? `Cross-Modal Fusion Request:\n${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}`
-    : reqBody.mode === 'autonomous_vision'
-    ? `Vision Router Request:\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
-    : `Transkrip Audio Sesi Rapat: ${transcriptText}\nMetadata Rapat: ${JSON.stringify(reqBody.metadata || {})}`;
+  const schemaPrompt = getSchemaInstructionsForJsonMode(reqBody.mode);
+  const textPrompt =
+    reqBody.mode === 'cross_modal_fusion'
+      ? `Cross-Modal Fusion Request:\n${JSON.stringify(reqBody.unifiedContext || {}, null, 2)}`
+      : reqBody.mode === 'synthesize'
+      ? `Sintesis Segmen:\n${JSON.stringify(reqBody.previousSummaries || [], null, 2)}\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
+      : reqBody.mode === 'autonomous_vision'
+      ? `Vision Router Request:\nKategori wajib (jika ada): ${reqBody.overrideCategory || 'Otomatis'}\nMetadata: ${JSON.stringify(reqBody.metadata || {})}`
+      : `Transkrip Audio Sesi Rapat: ${transcriptText}\nOCR Undangan: ${JSON.stringify(reqBody.ocrKnowledge || [])}\nMateri Slide: ${JSON.stringify(reqBody.paparanKnowledge || [])}\nMetadata Rapat: ${JSON.stringify(reqBody.metadata || {})}`;
 
-  const messages: any[] = [
-    { role: 'system', content: `${systemInstruction}\n\nStrict JSON output required matching schema properties.` },
-    { role: 'user', content: promptContent }
-  ];
+  const userContent: any[] = [{ type: 'text', text: textPrompt }];
+  if (reqBody.mode === 'autonomous_vision' && reqBody.imageDataUrl) {
+    userContent.push({ type: 'image_url', image_url: { url: reqBody.imageDataUrl } });
+  } else if (Array.isArray(reqBody.screenFrames) && reqBody.screenFrames.length > 0) {
+    reqBody.screenFrames.slice(0, 4).forEach((url: string) => {
+      if (typeof url === 'string' && url.startsWith('data:image/')) {
+        userContent.push({ type: 'image_url', image_url: { url } });
+      }
+    });
+  }
 
   const chatRes = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiApiKey}`,
+      Authorization: `Bearer ${openaiApiKey}`,
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
-      messages,
+      messages: [
+        { role: 'system', content: `${systemInstruction}\n\n${schemaPrompt}` },
+        { role: 'user', content: userContent },
+      ],
       response_format: { type: 'json_object' },
+      temperature: 0.15,
     }),
   });
 
@@ -356,114 +584,105 @@ async function callOpenAiBackup(reqBody: any, systemInstruction: string, schema:
     throw new Error(`OpenAI Chat Error (HTTP ${chatRes.status}): ${errText}`);
   }
 
-  const chatJson = await chatRes.json() as any;
+  const chatJson = (await chatRes.json()) as any;
   const content = chatJson.choices?.[0]?.message?.content || '{}';
-  return { text: content };
+  try {
+    const parsedObj = JSON.parse(content);
+    if (reqBody.mode !== 'autonomous_vision') {
+      if (!parsedObj.cleanTranscript && transcriptText) {
+        parsedObj.cleanTranscript = transcriptText;
+      }
+      if (!Array.isArray(parsedObj.actionItems)) {
+        parsedObj.actionItems = [];
+      }
+    }
+    return { text: JSON.stringify(parsedObj), providerUsed: 'openai' };
+  } catch {
+    return { text: content, providerUsed: 'openai' };
+  }
 }
 
 async function callGeminiWithRetryAndFallback(
-  ai: GoogleGenAI,
   contents: any,
   systemInstruction: string,
   schema: any,
   reqBody?: any
-) {
-  const preferredModel = reqBody?.preferredModel;
-  const groqApiKey = reqBody?.groqApiKey;
-  const openaiApiKey = reqBody?.openaiApiKey;
-  const priorityMode = reqBody?.priorityMode;
+): Promise<{ text?: string; providerUsed: string }> {
+  const groqApiKey = (reqBody?.groqApiKey || process.env.GROQ_API_KEY || '').trim();
+  const openaiApiKey = (reqBody?.openaiApiKey || process.env.OPENAI_API_KEY || '').trim();
+  const priorityMode = reqBody?.priorityMode || 'automatic';
+  const providerStage = reqBody?.providerStage || 'auto';
 
-  // 1. Force Groq if requested
-  if (priorityMode === 'force_groq' && groqApiKey) {
-    console.log('Priority Mode: Forcing Groq Backup API...');
+  // Explicit failover or force stages
+  if (providerStage === 'groq_failover' || (priorityMode === 'force_groq' && groqApiKey)) {
+    console.log('Executing Groq Failover / Priority Pipeline...');
     return await callGroqBackup(reqBody || { mode: 'single' }, systemInstruction, schema, groqApiKey);
   }
 
-  // 2. Force OpenAI if requested
-  if (priorityMode === 'force_openai' && openaiApiKey) {
-    console.log('Priority Mode: Forcing OpenAI Backup API...');
+  if (providerStage === 'openai_failover' || (priorityMode === 'force_openai' && openaiApiKey)) {
+    console.log('Executing OpenAI Failover / Priority Pipeline...');
     return await callOpenAiBackup(reqBody || { mode: 'single' }, systemInstruction, schema, openaiApiKey);
   }
 
-  const baseModels = [
-    preferredModel || 'gemini-2.5-flash',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-2.5-pro',
-    'gemini-3.1-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-4-hydrogen',
-  ];
-
-  // Deduplicate while preserving order
-  const uniqueModelNames = Array.from(new Set(baseModels.filter(Boolean)));
-  const candidateModels = uniqueModelNames.map((name) => ({
-    name,
-    useLowThinking: name === 'gemini-4-hydrogen',
-  }));
-
+  // Strictly use ONLY gemini-2.5-pro as the Gemini model (initial attempt + 2 quick retries with 2s & 4s delays)
+  const ai = getGeminiClient();
+  const modelName = 'gemini-2.5-pro';
+  const retryDelaysMs = [2000, 4000];
+  const maxAttempts = 1 + retryDelaysMs.length;
   let lastError: unknown = null;
 
-  for (const candidate of candidateModels) {
-    const maxRetries = 2;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const config: Record<string, any> = {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents,
+        config: {
           systemInstruction,
           responseMimeType: 'application/json',
           responseSchema: schema,
-        };
-        if (candidate.useLowThinking) {
-          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
-        }
+        },
+      });
+      return { text: response.text, providerUsed: modelName };
+    } catch (err: any) {
+      lastError = err;
+      const isTransient = isTransientOverloadError(err);
 
-        const response = await ai.models.generateContent({
-          model: candidate.name,
-          contents,
-          config,
-        });
-        return response;
-      } catch (err: any) {
-        lastError = err;
-        const isTransient = isTransientOverloadError(err);
+      if (isTransient && attempt < maxAttempts) {
+        const delayMs = retryDelaysMs[attempt - 1];
+        console.warn(
+          `${modelName} transient overload on attempt ${attempt}/${maxAttempts}; retrying in ${delayMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
 
-        if (isTransient && attempt < maxRetries) {
-          const delayMs = attempt === 1 ? 3000 : 6000;
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          continue;
-        }
-
-        if (isTransient && attempt === maxRetries) {
-          console.warn(`Model ${candidate.name} overloaded (503/429/Transient), switching to next model in fallback chain...`);
-          break; // Try next model candidate
-        }
-
-        // Non-transient error or exhausted model
-        if (!isTransient) {
-          throw err;
-        }
-        break;
+      if (!isTransient) {
+        throw err;
       }
     }
   }
 
-  // If all Gemini models failed due to transient overload (503/429), try Groq or OpenAI backup!
+  // When providerStage === 'gemini_only', return structured transient error so the client updates UI status and initiates Groq failover
+  if (providerStage === 'gemini_only') {
+    throw lastError;
+  }
+
+  // Automatic server-side failover when providerStage === 'auto'
   if (isTransientOverloadError(lastError)) {
     if (groqApiKey) {
       try {
-        console.log('Gemini exhausted. Failing over to Groq backup API...');
+        console.log('gemini-2.5-pro overloaded (503/429). Failing over automatically to Groq...');
         return await callGroqBackup(reqBody || { mode: 'single' }, systemInstruction, schema, groqApiKey);
       } catch (groqErr: any) {
-        console.warn('Groq failover failed:', groqErr?.message);
+        console.warn('Groq automatic failover failed:', groqErr?.message);
       }
     }
     if (openaiApiKey) {
       try {
-        console.log('Gemini exhausted. Failing over to OpenAI backup API...');
+        console.log('Failing over automatically to OpenAI...');
         return await callOpenAiBackup(reqBody || { mode: 'single' }, systemInstruction, schema, openaiApiKey);
       } catch (openaiErr: any) {
-        console.warn('OpenAI failover failed:', openaiErr?.message);
+        console.warn('OpenAI automatic failover failed:', openaiErr?.message);
       }
     }
   }
@@ -513,11 +732,9 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       mode = 'single',
     } = req.body || {};
 
-    const ai = getGeminiClient();
-
     const glossaryHint = metadata?.customGlossary?.trim()
       ? metadata.customGlossary.trim()
-      : 'Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon';
+      : 'Gunakan hanya istilah yang relevan atau benar-benar diucapkan/tertulis dalam sumber.';
 
     // 1. AUTONOMOUS MULTI-MODAL VISION ROUTER
     if (mode === 'autonomous_vision') {
@@ -530,8 +747,8 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
       const forcedCategoryInstruction = overrideCategory
         ? `klasifikasikan wajib sebagai "${overrideCategory}" sesuai instruksi operator`
         : `klasifikasikan secara OTOMATIS ke dalam salah satu dari 3 kategori berikut:
-1. "OCR_UNDANGAN": Jika foto berupa surat undangan rapat, nota dinas, telegram, jadwal kegiatan, atau daftar hadir. Ekstrak otomatis judulKegiatan, hariTanggal, pukul, tempat, pimpinanRapat, dan pesertaRapat via OCR.
-2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh substansi strategis, spesifikasi teknis, parameter angka, tabel, dan data kuantitatif ke dalam \`extractedKnowledge\` secara komprehensif (3-5 kalimat) serta susun \`isiKegiatanDraft\` dengan spasi baris kosong (\\n\\n) antar poin bernomor.
+1. "OCR_UNDANGAN": Jika foto berupa surat undangan rapat, nota dinas, telegram, jadwal kegiatan, atau daftar hadir. Ekstrak otomatis judulKegiatan, hariTanggal, pukul, tempat, pimpinanRapat, dan pesertaRapat via OCR (kosongkan "" jika tidak tertulis).
+2. "MATERI_PAPARAN": Jika foto berupa slide presentasi, layar proyektor, diagram teknis, tabel spesifikasi, atau papan tulis. Ekstrak seluruh substansi, spesifikasi, parameter angka, tabel, dan data kuantitatif yang benar-benar terlihat ke dalam \`extractedKnowledge\` (3-5 kalimat) serta susun \`isiKegiatanDraft\` dengan spasi baris kosong (\\n\\n) antar poin bernomor.
 3. "DOKUMENTASI_KEGIATAN": Jika foto berupa situasi ruang rapat, personel di lapangan, atau kegiatan fisik.`;
 
       const slideKnowledgeStr =
@@ -539,12 +756,11 @@ app.post('/api/summarize', async (req: Request, res: Response) => {
           ? `\nPengetahuan Slide Paparan Sesi Ini Sebelumnya:\n${paparanKnowledge.join('\n')}`
           : '';
 
-      const visionPrompt = `Analisis foto baru ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF DISKOMLEKAU dengan penalaran analitis mendalam Perwira Staf TNI AU, dan ${forcedCategoryInstruction}.
-Ekstrak HANYA informasi yang tertulis atau terlihat pada foto ini secara mendalam.${slideKnowledgeStr}
-Glosarium Istilah: ${glossaryHint}`;
+      const visionPrompt = `Analisis foto baru ini menggunakan Autonomous Multi-Modal Vision Router AEGIS-BRIEF dengan penalaran analitis mendalam, dan ${forcedCategoryInstruction}.
+Ekstrak HANYA informasi yang benar-benar tertulis atau terlihat pada foto ini (jangan mengarang atau mengisi kolom yang tidak terlihat; biarkan kosong "").${slideKnowledgeStr}
+Referensi Istilah (jika relevan): ${glossaryHint}`;
 
       const response = await callGeminiWithRetryAndFallback(
-        ai,
         {
           parts: [
             { inlineData: { mimeType: img.mimeType, data: img.data } },
@@ -570,6 +786,7 @@ Glosarium Istilah: ${glossaryHint}`;
       ) {
         parsed.category = 'DOKUMENTASI_KEGIATAN';
       }
+      parsed.providerUsed = response.providerUsed;
       res.end(JSON.stringify(parsed));
       return;
     }
@@ -577,16 +794,16 @@ Glosarium Istilah: ${glossaryHint}`;
     // 2. UNIFIED CROSS-MODAL FUSION ENGINE (Deep Multi-Layered Analytical Reasoning)
     if (mode === 'cross_modal_fusion' && unifiedContext) {
       startHeartbeat();
-      const fusionPrompt = `Terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU (TNI AU Staff Officer Analytical Reasoning) dan Fusi Lintas-Modal (Cross-Modal Fusion) atas seluruh input sesi aktif berikut dengan ekstraksi bukti multi-modal yang sangat rinci dan komprehensif (3-5 kalimat per poin):
+      const fusionPrompt = `Terapkan Penalaran Analitis Mendalam (Executive Staff Analytical Reasoning) dan Fusi Lintas-Modal (Cross-Modal Fusion) atas seluruh input sesi aktif berikut dengan ekstraksi bukti multi-modal yang rinci dan terverifikasi (3-5 kalimat per poin, nol halusinasi, kosongkan "" jika tidak ada bukti):
 
 === PAYLOAD KONTEKS MULTI-MODAL SESI AKTIF (\`buildUnifiedSessionContext\`) ===
 1. DATA STREAM AUDIO (Transkrip & Ringkasan Segmen Suara):
 ${JSON.stringify(unifiedContext.audioStreamData || [], null, 2)}
 
-2. DATA PINDAIAN UNDANGAN (\`OCR_UNDANGAN\` — Rujukan Otoritatif Judul, Waktu, Tempat, Pimpinan, Peserta & Ejaan):
+2. DATA PINDAIAN UNDANGAN (\`OCR_UNDANGAN\`):
 ${JSON.stringify(unifiedContext.ocrUndanganData || [], null, 2)}
 
-3. DATA PINDAIAN SLIDE / MATERI PAPARAN (\`MATERI_PAPARAN\` — Rujukan Otoritatif Spesifikasi Teknis, Angka, Tabel, & Parameter Kontrak/Alutsista):
+3. DATA PINDAIAN SLIDE / MATERI PAPARAN (\`MATERI_PAPARAN\`):
 ${JSON.stringify(unifiedContext.materiPaparanData || [], null, 2)}
 
 4. DATA DOKUMENTASI KEGIATAN LAPANGAN (\`DOKUMENTASI_KEGIATAN\`):
@@ -595,18 +812,18 @@ ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {}, null, 2)}
 5. METADATA RAPAT SAAT INI:
 ${JSON.stringify(unifiedContext.currentMetadata || metadata || {}, null, 2)}
 
-Glosarium Resmi TNI AU / DISKOMLEKAU: ${glossaryHint}
+Referensi Istilah (jika muncul pada sumber): ${glossaryHint}
 
 Instruksi Wajib:
-- Lakukan penyilangan data (cross-verify) antara angka/parameter yang disebutkan lisan di audio dengan rincian tabel/grafik pada slide \`MATERI_PAPARAN\`.
-- Susun \`isiKegiatan\` ke dalam poin-poin bernomor tematis (1., 2., 3., dst.) di mana setiap poin mencakup 3-5 kalimat komprehensif:
-  * Poin 1: Latar Belakang & Dasar Rujukan (surat/telegram/kontrak acuan & tujuan rapat).
-  * Poin Tengah: Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan (membedah angka, anggaran, parameter radar/rudal, serta kendala operasional).
-  * Poin Terakhir: Implikasi Operasional & Keputusan Pimpinan (dampak kesiapan TNI AU, direktif pimpinan, deadline, dan PIC).
+- Identifikasi topik dan domain kegiatan murni dari substansi audio dan tangkapan kamera (jangan memaksakan domain tertentu bila tidak sesuai).
+- Silangkan data (cross-verify) antara angka/parameter yang disebutkan lisan di audio dengan rincian tabel/grafik pada slide \`MATERI_PAPARAN\`.
+- Susun \`isiKegiatan\` ke dalam poin-poin bernomor tematis (1., 2., 3., dst.) di mana setiap poin berisi 3-5 kalimat komprehensif dan hanya memuat fakta terverifikasi:
+  * Poin 1: Konteks, Topik Inti & Dasar Pembahasan (sesuai bukti audio/slide).
+  * Poin Tengah: Bukti Teknis, Data Kuantitatif, Analisis Pembahasan, Kendala/Akar Masalah & Implikasi Nyata.
+  * Poin Terakhir: Keputusan, Direktif, Tindak Lanjut, Target Waktu & PIC (jika ada; jangan mengarang jika tidak disebutkan).
 - Pisahkan SETIAP poin bernomor dengan baris kosong eksplisit (\\n\\n).`;
 
       const response = await callGeminiWithRetryAndFallback(
-        ai,
         fusionPrompt,
         SYSTEM_INSTRUCTION,
         REPORT_RESPONSE_SCHEMA,
@@ -618,6 +835,7 @@ Instruksi Wajib:
       if (parsed.isiKegiatan) {
         parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
       }
+      parsed.providerUsed = response.providerUsed;
       res.end(JSON.stringify(parsed));
       return;
     }
@@ -637,14 +855,13 @@ Instruksi Wajib:
         ? `\n\nUNIFIED MULTI-MODAL SESSION CONTEXT:\n${JSON.stringify(unifiedContext, null, 2)}`
         : '';
 
-      const combinedPrompt = `Terapkan penalaran analitis mendalam Perwira Staf TNI AU dan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh dengan penjelasan komprehensif (3-5 kalimat per poin bernomor) dan pemisah baris kosong ganda (\\n\\n) antar poin:
+      const combinedPrompt = `Terapkan penalaran analitis mendalam dan Cross-Modal Fusion untuk menggabungkan hasil ekstraksi dari ${previousSummaries.length} segmen rekaman rapat sesi ini beserta pindaian OCR_UNDANGAN dan MATERI_PAPARAN menjadi SATU laporan notulensi utuh yang 100% berdasar fakta terverifikasi (kosongkan "" jika tidak diketahui), dengan penjelasan komprehensif (3-5 kalimat per poin bernomor) dan pemisah baris kosong ganda (\\n\\n) antar poin:
 
 ${JSON.stringify(previousSummaries, null, 2)}${ocrContextStr}${slideContextStr}${unifiedContextStr}
 
-Istilah Khusus (Glossary): ${glossaryHint}`;
+Referensi Istilah (jika muncul pada sumber): ${glossaryHint}`;
 
       const response = await callGeminiWithRetryAndFallback(
-        ai,
         combinedPrompt,
         SYSTEM_INSTRUCTION,
         REPORT_RESPONSE_SCHEMA,
@@ -656,6 +873,7 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
       if (parsed.isiKegiatan) {
         parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
       }
+      parsed.providerUsed = response.providerUsed;
       res.end(JSON.stringify(parsed));
       return;
     }
@@ -699,27 +917,26 @@ Istilah Khusus (Glossary): ${glossaryHint}`;
 
     const slideContextStr =
       Array.isArray(paparanKnowledge) && paparanKnowledge.length > 0
-        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN — silangkan data angka/spesifikasi teknis dengan suara lisan):\n${paparanKnowledge.join('\n')}`
+        ? `\nKonteks Materi Slide Paparan (MATERI_PAPARAN — silangkan data angka/spesifikasi dengan suara lisan):\n${paparanKnowledge.join('\n')}`
         : '';
 
     const ocrContextStr =
       Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0
-        ? `\nKonteks Pindaian Undangan (OCR_UNDANGAN — gunakan sebagai rujukan ejaan resmi Judul, Waktu, Tempat, Pimpinan & Peserta):\n${ocrKnowledge.join('\n')}`
+        ? `\nKonteks Pindaian Undangan (OCR_UNDANGAN — gunakan hanya jika cocok dengan sesi):\n${ocrKnowledge.join('\n')}`
         : '';
 
     const currentTitleHint = metadata?.judulKegiatan?.trim()
-      ? `\nJudul Kegiatan Sesi Ini (dari Undangan/Input): ${metadata.judulKegiatan.trim()}`
+      ? `\nJudul Kegiatan Sesi Ini (Input Operator/Undangan): ${metadata.judulKegiatan.trim()}`
       : '';
 
     parts.push({
-      text: `Transkripsikan, saring basa-basi lisan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU (Cross-Modal Fusion) antara rekaman suara rapat ini dengan data OCR_UNDANGAN serta MATERI_PAPARAN sesi ini.${currentTitleHint}
+      text: `Transkripsikan rekaman suara rapat ini secara kronologis dan akurat, saring basa-basi, dan terapkan Penalaran Analitis Mendalam (Cross-Modal Fusion) antara rekaman suara dengan tangkapan layar/foto serta konteks OCR_UNDANGAN/MATERI_PAPARAN sesi ini.${currentTitleHint}
 Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
-Daftar Istilah / Singkatan Resmi (Glossary): ${glossaryHint}.${ocrContextStr}${slideContextStr}
-Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin: Poin 1 Latar Belakang & Rujukan; Poin Tengah Data Kuantitatif, Spesifikasi Teknis & Analisis Pembahasan; Poin Terakhir Implikasi Operasional & Keputusan Pimpinan) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Hasilkan JSON lengkap sesuai skema.`,
+Referensi Istilah (jika memang terucap/terlihat): ${glossaryHint}.${ocrContextStr}${slideContextStr}
+Aturan Ketat: Gunakan 100% fakta dari audio dan gambar. Biarkan kolom kosong ("") jika tidak disebutkan/terlihat. Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin bernomor. Hasilkan JSON lengkap sesuai skema.`,
     });
 
     const response = await callGeminiWithRetryAndFallback(
-      ai,
       { parts },
       SYSTEM_INSTRUCTION,
       REPORT_RESPONSE_SCHEMA,
@@ -732,19 +949,24 @@ Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per po
     if (parsed.isiKegiatan) {
       parsed.isiKegiatan = normalizeServerIsiKegiatanSpacing(parsed.isiKegiatan);
     }
+    parsed.providerUsed = response.providerUsed;
     res.end(JSON.stringify(parsed));
   } catch (error: any) {
     stopHeartbeat();
-    console.error('Gemini API Error:', error);
+    console.error('AI Pipeline Error:', error);
+    const isTransient = isTransientOverloadError(error);
     const message =
       error?.message ||
-      'Terjadi kesalahan saat memproses data rapat dengan Gemini Multimodal API.';
+      'Terjadi kesalahan saat memproses data rapat dengan AI Multimodal API.';
     if (!res.headersSent) {
-      res.status(400);
+      res.status(isTransient ? 503 : 400);
     }
     res.end(
       JSON.stringify({
         error: message,
+        isTransientOverload: isTransient,
+        serverGroqConfigured: Boolean(process.env.GROQ_API_KEY?.trim()),
+        serverOpenAiConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
       })
     );
   }

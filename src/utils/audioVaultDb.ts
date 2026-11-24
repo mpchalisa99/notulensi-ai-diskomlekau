@@ -19,6 +19,8 @@ export interface ArchivedSessionRecord {
 export interface MeetingBundleRecord {
   id: string;
   savedAt: string;
+  durationSec?: number;
+  providerUsed?: string;
   metadata: MeetingMetadata;
   chunks: {
     id: string;

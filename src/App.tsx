@@ -24,6 +24,8 @@ import {
   Loader2,
   ListChecks,
   Settings,
+  Copy,
+  ScrollText,
 } from 'lucide-react';
 import type {
   AudioChunkItem,
@@ -44,6 +46,7 @@ import {
   detectWaktuSalam,
   formatIndonesianDate,
   getTodayIsoDate,
+  mergeChronologicalTranscripts,
 } from './utils/reportFormatter';
 import { exportReportToDocx } from './utils/docxExport';
 import {
@@ -120,9 +123,9 @@ export default function App() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiSuccessBanner, setApiSuccessBanner] = useState<string | null>(null);
   const [copiedWA, setCopiedWA] = useState(false);
+  const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
 
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [savedMeetingBundles, setSavedMeetingBundles] = useState<MeetingBundleRecord[]>([]);
   const [showSavedBundlesModal, setShowSavedBundlesModal] = useState(false);
 
@@ -202,6 +205,7 @@ export default function App() {
   const capturedPhotosRef = useRef<CapturedPhotoItem[]>(capturedPhotos);
   const chunksRef = useRef<AudioChunkItem[]>(chunks);
   const isManualEditLockedRef = useRef<boolean>(isManualEditLocked);
+  const backupSettingsRef = useRef<BackupAiSettings>(backupSettings);
 
   useEffect(() => {
     metadataRef.current = metadata;
@@ -218,6 +222,10 @@ export default function App() {
   useEffect(() => {
     isManualEditLockedRef.current = isManualEditLocked;
   }, [isManualEditLocked]);
+
+  useEffect(() => {
+    backupSettingsRef.current = backupSettings;
+  }, [backupSettings]);
 
   // Always reset to a clean new session on app startup and drop old data
   useEffect(() => {
@@ -360,6 +368,7 @@ export default function App() {
     setSelectedPhotoId(null);
     setCustomFullText(null);
     setIsManualEditLocked(false);
+    setCopiedTranscript(false);
     setApiError(null);
     setIsSessionExited(false);
     setMetadata(createCleanSessionMetadata(now));
@@ -405,6 +414,21 @@ export default function App() {
     setIsSessionExited(false);
   };
 
+  const isTransientMessageOrStatus = (statusCode: number, parsed: any): boolean => {
+    if (parsed?.isTransientOverload === true || statusCode === 503 || statusCode === 429) {
+      return true;
+    }
+    const msg = String(parsed?.error || '').toLowerCase();
+    return (
+      msg.includes('503') ||
+      msg.includes('unavailable') ||
+      msg.includes('high demand') ||
+      msg.includes('overloaded') ||
+      msg.includes('resource_exhausted') ||
+      msg.includes('429')
+    );
+  };
+
   const parseApiResponseSafe = async (response: Response, contextLabel: string) => {
     const rawText = await response.text();
     const trimmed = rawText.trim();
@@ -414,28 +438,108 @@ export default function App() {
       trimmed.startsWith('<!DOCTYPE') ||
       trimmed.startsWith('<html')
     ) {
-      throw new Error(
+      const err: any = new Error(
         `${contextLabel}: Server mengembalikan halaman HTML (HTTP ${response.status}). Silakan coba kembali.`
       );
+      err.isTransientOverload = response.status === 503 || response.status === 429;
+      throw err;
     }
 
     let parsed: any;
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      throw new Error(
+      const err: any = new Error(
         `${contextLabel}: Format respons server tidak valid (HTTP ${response.status}).`
       );
+      err.isTransientOverload = response.status === 503 || response.status === 429;
+      throw err;
     }
 
     if (!response.ok || parsed?.error) {
-      throw new Error(
+      const err: any = new Error(
         parsed?.error || `Gagal memproses ${contextLabel} (HTTP ${response.status})`
       );
+      err.isTransientOverload = isTransientMessageOrStatus(response.status, parsed);
+      err.serverGroqConfigured = Boolean(parsed?.serverGroqConfigured);
+      err.serverOpenAiConfigured = Boolean(parsed?.serverOpenAiConfigured);
+      throw err;
     }
 
     return parsed;
   };
+
+  /**
+   * Unified AI Call with Strict gemini-2.5-pro Retry + Visible Automatic Failover to Groq
+   */
+  const callAiEndpointWithFailover = useCallback(
+    async (
+      bodyPayload: Record<string, any>,
+      contextLabel: string
+    ): Promise<any> => {
+      const currentSettings = backupSettingsRef.current;
+      const baseRequest = {
+        ...bodyPayload,
+        preferredModel: 'gemini-2.5-pro',
+        groqApiKey: currentSettings.groqApiKey,
+        openaiApiKey: currentSettings.openaiApiKey,
+        priorityMode: currentSettings.priorityMode,
+      };
+
+      const postJson = async (payload: Record<string, any>) => {
+        const res = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+        return parseApiResponseSafe(res, contextLabel);
+      };
+
+      if (currentSettings.priorityMode === 'force_groq') {
+        setProcessingStatusText(`Memproses ${contextLabel} via Groq (Whisper + Llama 3.3)...`);
+        return postJson({ ...baseRequest, providerStage: 'groq_failover' });
+      }
+
+      if (currentSettings.priorityMode === 'force_openai') {
+        setProcessingStatusText(`Memproses ${contextLabel} via OpenAI Cadangan...`);
+        return postJson({ ...baseRequest, providerStage: 'openai_failover' });
+      }
+
+      // Stage 1: Gemini 2.5 Pro ONLY (with server-side 2s + 4s quick retries)
+      try {
+        return await postJson({ ...baseRequest, providerStage: 'gemini_only' });
+      } catch (err: any) {
+        if (!err?.isTransientOverload) {
+          throw err;
+        }
+
+        const hasGroq = Boolean(currentSettings.groqApiKey?.trim() || err?.serverGroqConfigured);
+        const hasOpenAi = Boolean(currentSettings.openaiApiKey?.trim() || err?.serverOpenAiConfigured);
+
+        if (hasGroq) {
+          const failoverMsg = 'Gemini Pro sedang padat (503). Mengalihkan otomatis ke Groq...';
+          setProcessingStatusText(failoverMsg);
+          setApiSuccessBanner(failoverMsg);
+          return await postJson({ ...baseRequest, providerStage: 'groq_failover' });
+        }
+
+        if (hasOpenAi) {
+          const failoverMsg = 'Gemini Pro sedang padat (503). Mengalihkan otomatis ke OpenAI...';
+          setProcessingStatusText(failoverMsg);
+          setApiSuccessBanner(failoverMsg);
+          return await postJson({ ...baseRequest, providerStage: 'openai_failover' });
+        }
+
+        throw new Error(
+          'Gemini Pro sedang padat (503 High Demand) dan Groq API Key cadangan belum dikonfigurasi di Pengaturan (⚙).'
+        );
+      }
+    },
+    []
+  );
 
   /**
    * Cross-Modal Fusion & Real-Time Re-Synchronization Engine:
@@ -474,30 +578,18 @@ export default function App() {
 
       setIsCrossModalSyncing(true);
       try {
-        const response = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
+        const fused = (await callAiEndpointWithFailover(
+          {
             mode: 'cross_modal_fusion',
             unifiedContext,
             metadata: activeMeta,
-            preferredModel: selectedModel,
-            groqApiKey: backupSettings.groqApiKey,
-            openaiApiKey: backupSettings.openaiApiKey,
-            priorityMode: backupSettings.priorityMode,
-          }),
-        });
-
-        const fused = (await parseApiResponseSafe(
-          response,
+          },
           'Cross-Modal Fusion'
         )) as MeetingReportResult;
 
         const now = new Date();
         const currentIso = getTodayIsoDate(now);
+        const chronologicalMerged = mergeChronologicalTranscripts(activeChunks);
 
         // Apply fused metadata & report unless manual edit lock is active
         if (!isManualEditLockedRef.current || forceUnlockManualEdit) {
@@ -539,7 +631,9 @@ export default function App() {
                 ? fused.actionItems
                 : prev.actionItems,
             cleanTranscript:
-              fused.cleanTranscript?.trim() || prev.cleanTranscript,
+              chronologicalMerged ||
+              fused.cleanTranscript?.trim() ||
+              prev.cleanTranscript,
           }));
         }
       } catch (err: any) {
@@ -548,7 +642,7 @@ export default function App() {
         setIsCrossModalSyncing(false);
       }
     },
-    []
+    [callAiEndpointWithFailover]
   );
 
   // Routes a newly captured photo through Gemini Vision using current session context & triggers Auto-Sync
@@ -565,27 +659,14 @@ export default function App() {
         )
         .map((p) => p.extractedText!);
 
-      const response = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
+      const result = (await callAiEndpointWithFailover(
+        {
           mode: 'autonomous_vision',
           imageDataUrl: cleanDataUrl,
           overrideCategory,
           paparanKnowledge: currentSessionPaparan,
           metadata: currentMeta,
-          preferredModel: selectedModel,
-          groqApiKey: backupSettings.groqApiKey,
-          openaiApiKey: backupSettings.openaiApiKey,
-          priorityMode: backupSettings.priorityMode,
-        }),
-      });
-
-      const result = (await parseApiResponseSafe(
-        response,
+        },
         'Autonomous Vision Router'
       )) as VisionRouterResponse;
 
@@ -970,13 +1051,8 @@ export default function App() {
             : screenFrames.slice(-3)),
         ].slice(0, 4);
 
-        const response = await fetch('/api/summarize', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
+        const data = (await callAiEndpointWithFailover(
+          {
             mode: 'single',
             audioBase64,
             mimeType: chunk.mimeType,
@@ -986,15 +1062,7 @@ export default function App() {
             metadata: currentMeta,
             chunkIndex: i,
             totalChunks: updatedChunksList.length,
-            preferredModel: selectedModel,
-            groqApiKey: backupSettings.groqApiKey,
-            openaiApiKey: backupSettings.openaiApiKey,
-            priorityMode: backupSettings.priorityMode,
-          }),
-        });
-
-        const data = (await parseApiResponseSafe(
-          response,
+          },
           `Segmen Suara #${i + 1}`
         )) as MeetingReportResult;
 
@@ -1016,6 +1084,9 @@ export default function App() {
         );
       }
 
+      // Merge all segment transcripts chronologically
+      const mergedTranscript = mergeChronologicalTranscripts(updatedChunksList);
+
       // Now execute Unified Cross-Modal Fusion across all audio segments + OCR_UNDANGAN + MATERI_PAPARAN
       setProcessingStatusText(
         'Fusi Lintas-Modal (Suara + OCR Undangan + Slide Paparan)...'
@@ -1027,30 +1098,35 @@ export default function App() {
         metadataRef.current
       );
 
-      const fusionResponse = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
+      const finalResult = (await callAiEndpointWithFailover(
+        {
           mode: 'cross_modal_fusion',
           unifiedContext,
           metadata: metadataRef.current,
-          preferredModel: selectedModel,
-          groqApiKey: backupSettings.groqApiKey,
-          openaiApiKey: backupSettings.openaiApiKey,
-          priorityMode: backupSettings.priorityMode,
-        }),
-      });
-
-      const finalResult = (await parseApiResponseSafe(
-        fusionResponse,
+        },
         'Cross-Modal Fusion'
       )) as MeetingReportResult;
 
+      const resolvedCleanTranscript =
+        mergedTranscript || finalResult.cleanTranscript || '';
+
+      const finalizedReport: MeetingReportResult = {
+        judulKegiatan: finalResult.judulKegiatan,
+        hariTanggal: finalResult.hariTanggal,
+        pukul: finalResult.pukul,
+        pimpinanRapat: finalResult.pimpinanRapat,
+        pesertaRapat: finalResult.pesertaRapat,
+        tempat: finalResult.tempat,
+        isiKegiatan: finalResult.isiKegiatan || '',
+        executiveSummary: finalResult.executiveSummary || '',
+        actionItems: Array.isArray(finalResult.actionItems)
+          ? finalResult.actionItems
+          : [],
+        cleanTranscript: resolvedCleanTranscript,
+      };
+
       bundleRecord.status = 'completed';
-      bundleRecord.report = finalResult;
+      bundleRecord.report = finalizedReport;
       await saveMeetingBundle(bundleRecord);
       loadAllMeetingBundles().then(setSavedMeetingBundles).catch(() => {});
 
@@ -1084,26 +1160,13 @@ export default function App() {
       }));
 
       if (!isManualEditLockedRef.current) {
-        setReport({
-          judulKegiatan: finalResult.judulKegiatan,
-          hariTanggal: finalResult.hariTanggal,
-          pukul: finalResult.pukul,
-          pimpinanRapat: finalResult.pimpinanRapat,
-          pesertaRapat: finalResult.pesertaRapat,
-          tempat: finalResult.tempat,
-          isiKegiatan: finalResult.isiKegiatan || '',
-          executiveSummary: finalResult.executiveSummary || '',
-          actionItems: Array.isArray(finalResult.actionItems)
-            ? finalResult.actionItems
-            : [],
-          cleanTranscript: finalResult.cleanTranscript || '',
-        });
+        setReport(finalizedReport);
       }
 
       setApiSuccessBanner(
         `Fusi Lintas-Modal Selesai: ${updatedChunksList.length} Segmen Suara + ${
           capturedPhotosRef.current.filter((p) => p.status === 'done').length
-        } Pindaian Gambar telah disinkronkan!`
+        } Pindaian Gambar & Transkrip Utuh Gabungan siap disalin!`
       );
     } catch (err: any) {
       const errorMsg = err?.message || '503 High Demand / Server AI Sibuk';
@@ -1115,7 +1178,7 @@ export default function App() {
       } catch {}
 
       setApiError(
-        `Server AI mengalami lonjakan (503 / High Demand). Rapat telah tersimpan aman di Brankas Lokal (IndexedDB). Silakan buka menu "Rapat Tersimpan" untuk Coba Analisis Ulang atau ganti Model AI di atas.`
+        `${errorMsg} — Seluruh audio & foto telah diamankan di Brankas Lokal (IndexedDB). Buka "Rapat Tersimpan" untuk Coba Analisis Ulang atau lengkapi Groq API Key di Pengaturan (⚙).`
       );
       setChunks((prev) =>
         prev.map((c) => (c.status === 'processing' ? { ...c, status: 'error' } : c))
@@ -1168,6 +1231,25 @@ export default function App() {
       document.body.removeChild(textarea);
       setCopiedWA(true);
       setTimeout(() => setCopiedWA(false), 2500);
+    }
+  };
+
+  const handleCopyTranscript = async () => {
+    const textToCopy = report.cleanTranscript?.trim() || '';
+    if (!textToCopy) return;
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopiedTranscript(true);
+      setTimeout(() => setCopiedTranscript(false), 2500);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = textToCopy;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedTranscript(true);
+      setTimeout(() => setCopiedTranscript(false), 2500);
     }
   };
 
@@ -1417,17 +1499,21 @@ export default function App() {
             </button>
 
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">Model AI:</span>
+              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">Engine AI:</span>
               <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
+                value={backupSettings.priorityMode}
+                onChange={(e) =>
+                  setBackupSettings((prev) => ({
+                    ...prev,
+                    priorityMode: e.target.value as BackupAiSettings['priorityMode'],
+                  }))
+                }
                 className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-amber-300 font-bold outline-none cursor-pointer"
-                title="Pilih Model AI (Ganti model jika terjadi lonjakan 503 high demand)"
+                title="Mesin Utama: Gemini 2.5 Pro dengan Auto-Failover ke Groq saat 503"
               >
-                <option value="gemini-2.5-flash">gemini-2.5-flash (Default)</option>
-                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Ringan)</option>
-                <option value="gemini-2.0-flash">gemini-2.0-flash (Stabil)</option>
-                <option value="gemini-2.5-pro">gemini-2.5-pro (Mendalam)</option>
+                <option value="automatic">gemini-2.5-pro → Auto Groq</option>
+                <option value="force_groq">Groq Langsung (Whisper + Llama 3.3)</option>
+                <option value="force_openai">OpenAI Cadangan (GPT-4o-mini)</option>
               </select>
             </div>
 
@@ -1773,6 +1859,52 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Dedicated Panel: Transkrip Utuh Gabungan (Chronologically Merged Across All Segments) */}
+              <div className="bg-[#0B1120] border border-slate-800 rounded-lg p-2 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#38BDF8] uppercase tracking-wider">
+                    <ScrollText className="w-3.5 h-3.5 shrink-0" />
+                    <span>Transkrip Utuh Gabungan</span>
+                    <span className="text-[9px] font-mono text-slate-400 font-normal">
+                      ({syncedAudioCount}/{chunks.length} Segmen)
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyTranscript}
+                    disabled={!report.cleanTranscript?.trim()}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-600 text-[10px] font-bold text-slate-100 cursor-pointer transition-colors"
+                    title="Salin seluruh Transkrip Utuh Gabungan ke clipboard"
+                  >
+                    {copiedTranscript ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" />
+                        <span className="text-emerald-300">Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3 text-[#38BDF8]" />
+                        <span>Salin Transkrip</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <textarea
+                  rows={5}
+                  value={report.cleanTranscript}
+                  onChange={(e) =>
+                    setReport((prev) => ({
+                      ...prev,
+                      cleanTranscript: e.target.value,
+                    }))
+                  }
+                  placeholder="Transkrip kronologis gabungan dari seluruh segmen rekaman suara akan muncul otomatis di sini setelah analisis AI selesai..."
+                  className="w-full bg-[#111827] border border-slate-800 focus:border-[#38BDF8] focus:outline-none rounded-md p-2 text-[11px] text-slate-200 leading-relaxed resize-y font-sans placeholder:text-slate-500"
+                />
+              </div>
             </section>
           </div>
         </div>
