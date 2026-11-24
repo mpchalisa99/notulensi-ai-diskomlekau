@@ -13,14 +13,9 @@ import {
   AlertTriangle,
   ShieldCheck,
   Database,
-  RefreshCw,
-  Download,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 import type { AudioChunkItem, CaptureMode } from '../types';
-import { formatBytes, formatDurationHMS } from '../utils/reportFormatter';
+import { formatDurationHMS } from '../utils/reportFormatter';
 import {
   createSilentLoopWavDataUrl,
   saveAudioChunkToVault,
@@ -32,21 +27,16 @@ interface AudioRecorderProps {
   onAddScreenFrame: (dataUrl: string) => void;
   onRemoveScreenFrame: (idx: number) => void;
   onAddChunk: (chunk: AudioChunkItem) => void;
-  onRotateChunkReady: (completedChunk: AudioChunkItem) => void;
-  onFinalStopReady: (finalChunk: AudioChunkItem | null) => void;
   onClearChunks: () => void;
   onRemoveChunk: (id: string) => void;
-  onRetryChunkAnalysis: (chunkId: string) => void;
   onProcessWithAI: (chunksToProcess?: AudioChunkItem[]) => void;
   isProcessingAI: boolean;
-  backgroundProcessingCount: number;
   processingStatusText: string;
   onRecordingStateChange?: (isRecording: boolean) => void;
   registerStopRecordingRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
-// 5 minutes per chunk (300,000 ms)
-const CHUNK_DURATION_MS = 5 * 60 * 1000;
+const CHUNK_DURATION_MS = 10 * 60 * 1000;
 const AUTO_SCREENSHOT_INTERVAL_MS = 15 * 60 * 1000;
 const MAX_UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
 
@@ -55,14 +45,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   screenFrames,
   onAddScreenFrame,
   onAddChunk,
-  onRotateChunkReady,
-  onFinalStopReady,
   onClearChunks,
-  onRemoveChunk,
-  onRetryChunkAnalysis,
   onProcessWithAI,
   isProcessingAI,
-  backgroundProcessingCount,
   processingStatusText,
   onRecordingStateChange,
   registerStopRecordingRef,
@@ -72,7 +57,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [currentChunkNumber, setCurrentChunkNumber] = useState(1);
-  const [showChunkList, setShowChunkList] = useState(true);
 
   const [screenVideoActive, setScreenVideoActive] = useState(false);
   const [systemAudioActive, setSystemAudioActive] = useState(false);
@@ -96,11 +80,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const activeStreamsRef = useRef<MediaStream[]>([]);
   const mixedDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
-  // Per-recorder stop intent map so 5-min rotations never collide with final manual stop or EXIT
-  const recorderStopIntentRef = useRef<WeakMap<MediaRecorder, 'rotate' | 'finalize' | 'exit'>>(
-    new WeakMap()
-  );
-
   // Background Keep-Alive & WakeLock refs
   const wakeLockSentinelRef = useRef<any>(null);
   const keepAliveOscillatorRef = useRef<OscillatorNode | null>(null);
@@ -115,17 +94,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const screenSnapIntervalRef = useRef<number | null>(null);
   const clockIntervalRef = useRef<number | null>(null);
   const capturedFramesRef = useRef<string[]>([]);
+  const autoProcessOnStopRef = useRef<boolean>(false);
   const chunksRef = useRef<AudioChunkItem[]>(chunks);
-  const captureModeRef = useRef<CaptureMode>(captureMode);
 
   useEffect(() => {
     chunksRef.current = chunks;
     setVaultSavedCount(chunks.length);
   }, [chunks]);
-
-  useEffect(() => {
-    captureModeRef.current = captureMode;
-  }, [captureMode]);
 
   useEffect(() => {
     capturedFramesRef.current = screenFrames;
@@ -174,53 +149,59 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   }, []);
 
   // 2. MediaSession & Silent Keep-Alive Oscillator + Audio Loop for Background Persistence
-  const startBackgroundKeepAlive = useCallback(async (audioCtx: AudioContext) => {
-    try {
-      const osc = audioCtx.createOscillator();
-      const silentGain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = 440;
-      silentGain.gain.value = 0.0001;
-      osc.connect(silentGain);
-      silentGain.connect(audioCtx.destination);
-      osc.start();
-      keepAliveOscillatorRef.current = osc;
-      keepAliveGainRef.current = silentGain;
+  const startBackgroundKeepAlive = useCallback(
+    async (audioCtx: AudioContext) => {
+      try {
+        // Web Audio API Silent Keep-Alive Oscillator (gain = 0.0001)
+        const osc = audioCtx.createOscillator();
+        const silentGain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 440;
+        silentGain.gain.value = 0.0001;
+        osc.connect(silentGain);
+        silentGain.connect(audioCtx.destination);
+        osc.start();
+        keepAliveOscillatorRef.current = osc;
+        keepAliveGainRef.current = silentGain;
 
-      if (!silentAudioElRef.current) {
-        const audioEl = new Audio(createSilentLoopWavDataUrl());
-        audioEl.loop = true;
-        audioEl.volume = 0.01;
-        silentAudioElRef.current = audioEl;
+        // HTMLAudioElement Silent WAV Loop to keep mobile OS MediaSession active in background
+        if (!silentAudioElRef.current) {
+          const audioEl = new Audio(createSilentLoopWavDataUrl());
+          audioEl.loop = true;
+          audioEl.volume = 0.01;
+          silentAudioElRef.current = audioEl;
+        }
+        await silentAudioElRef.current.play().catch(() => {});
+
+        // Media Session API Metadata & PlaybackState
+        if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'AEGIS-BRIEF DISKOMLEKAU — Merekam Rapat Aktif',
+            artist: 'DISKOMLEKAU Tactical Audio Engine',
+            album: 'Background Recording Keep-Alive',
+            artwork: [
+              {
+                src: '/icon-192.png?v=2',
+                sizes: '192x192',
+                type: 'image/png',
+              },
+              {
+                src: '/icon-512.png?v=2',
+                sizes: '512x512',
+                type: 'image/png',
+              },
+            ],
+          });
+          navigator.mediaSession.playbackState = 'playing';
+        }
+
+        setBgKeepAliveActive(true);
+      } catch {
+        setBgKeepAliveActive(false);
       }
-      await silentAudioElRef.current.play().catch(() => {});
-
-      if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'AEGIS-BRIEF DISKOMLEKAU — Merekam Rapat Aktif (Chunk 5 Menit)',
-          artist: 'DISKOMLEKAU Tactical Audio Engine',
-          album: 'Background Recording Keep-Alive',
-          artwork: [
-            {
-              src: '/icon-192.png?v=2',
-              sizes: '192x192',
-              type: 'image/png',
-            },
-            {
-              src: '/icon-512.png?v=2',
-              sizes: '512x512',
-              type: 'image/png',
-            },
-          ],
-        });
-        navigator.mediaSession.playbackState = 'playing';
-      }
-
-      setBgKeepAliveActive(true);
-    } catch {
-      setBgKeepAliveActive(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   const stopBackgroundKeepAlive = useCallback(() => {
     try {
@@ -248,6 +229,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
   }, []);
 
+  // Re-acquire WakeLock and resume AudioContext on visibilitychange so switching to WhatsApp/PDF never drops recording
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!isRecordingRef.current) return;
@@ -256,7 +238,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         acquireWakeLock();
       }
 
-      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      if (
+        audioContextRef.current &&
+        audioContextRef.current.state === 'suspended'
+      ) {
         audioContextRef.current.resume().catch(() => {});
       }
 
@@ -453,9 +438,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   useEffect(() => {
     if (!registerStopRecordingRef) return;
     registerStopRecordingRef.current = async () => {
+      autoProcessOnStopRef.current = false;
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== 'inactive') {
-        recorderStopIntentRef.current.set(recorder, 'exit');
         await new Promise<void>((resolve) => {
           const prevOnStop = recorder.onstop;
           recorder.onstop = (ev) => {
@@ -504,10 +489,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       }
     };
 
-    recorder.onstop = async () => {
-      const intent = recorderStopIntentRef.current.get(recorder) || 'finalize';
-      let finalizedChunk: AudioChunkItem | null = null;
-
+    recorder.onstop = () => {
       if (localBlobParts.length > 0) {
         const finalMime = recorder.mimeType || mimeType || 'audio/webm';
         const blob = new Blob(localBlobParts, { type: finalMime });
@@ -515,7 +497,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         const idx = chunkCounterRef.current;
         chunkCounterRef.current += 1;
 
-        finalizedChunk = {
+        const newChunk: AudioChunkItem = {
           id: `chunk-${Date.now()}-${idx}`,
           index: idx,
           blob,
@@ -526,21 +508,18 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             elapsedSecondsRef.current
           )}`,
           status: 'ready',
-          source: captureModeRef.current,
           screenFrames: [...capturedFramesRef.current],
         };
 
-        // Immediately persist completed 5-minute chunk to IndexedDB (aegis_audio_vault)
-        await saveAudioChunkToVault(finalizedChunk);
-        onAddChunk(finalizedChunk);
-      }
+        // Immediately persist completed chunk to IndexedDB (aegis_audio_vault)
+        saveAudioChunkToVault(newChunk);
+        onAddChunk(newChunk);
 
-      if (intent === 'rotate' && finalizedChunk) {
-        // Analyze this completed 5-minute chunk in background while recording of next chunk continues!
-        onRotateChunkReady(finalizedChunk);
-      } else if (intent === 'finalize') {
-        // Recording stopped: analyze final chunk + all camera/uploaded images + correlate everything!
-        onFinalStopReady(finalizedChunk);
+        if (autoProcessOnStopRef.current) {
+          setTimeout(() => {
+            onProcessWithAI([...chunksRef.current, newChunk]);
+          }, 250);
+        }
       }
     };
 
@@ -555,7 +534,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (!currentRecorder || !dest || currentRecorder.state === 'inactive') return;
 
     captureFrameFromDisplayTrack();
-    recorderStopIntentRef.current.set(currentRecorder, 'rotate');
+    autoProcessOnStopRef.current = true;
     const mimeType = currentRecorder.mimeType || getSupportedMimeType();
     currentRecorder.stop();
     setCurrentChunkNumber((prev) => prev + 1);
@@ -565,6 +544,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const handleStartRecording = async () => {
     setRecorderError(null);
     setRecorderWarning(null);
+    autoProcessOnStopRef.current = false;
 
     try {
       const AudioCtx =
@@ -684,17 +664,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
       setScreenVideoActive(hasDisplayVideo);
       setMicAudioActive(hasMicAudio);
 
+      // Activate Screen Wake Lock + Silent Keep-Alive Oscillator + MediaSession
       await acquireWakeLock();
       await startBackgroundKeepAlive(audioCtx);
 
       elapsedSecondsRef.current = 0;
-      const existingNextIndex =
-        chunksRef.current.length > 0
-          ? Math.max(...chunksRef.current.map((c) => c.index)) + 1
-          : 0;
-      chunkCounterRef.current = existingNextIndex;
+      chunkCounterRef.current = chunks.length;
       setElapsedSeconds(0);
-      setCurrentChunkNumber(existingNextIndex + 1);
+      setCurrentChunkNumber(chunks.length + 1);
 
       const mimeType = getSupportedMimeType();
       createAndStartRecorder(destination.stream, mimeType);
@@ -707,7 +684,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         setElapsedSeconds(elapsedSecondsRef.current);
       }, 1000);
 
-      // Every 5 minutes: rotate chunk and analyze completed chunk while continuing next chunk
       chunkTimerRef.current = window.setInterval(() => {
         rotateChunk();
       }, CHUNK_DURATION_MS);
@@ -750,12 +726,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (displayVideoTrackRef.current?.readyState === 'live') {
       captureFrameFromDisplayTrack();
     }
+    autoProcessOnStopRef.current = true;
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
-      recorderStopIntentRef.current.set(recorder, 'finalize');
       recorder.stop();
-    } else {
-      onFinalStopReady(null);
     }
     setIsRecording(false);
     setIsPaused(false);
@@ -768,10 +742,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
     setRecorderWarning(null);
 
     const allowedAudioExts = ['.mp3', '.wav', '.webm', '.m4a', '.ogg', '.mp4', '.aac'];
-    let nextIdx =
-      chunksRef.current.length > 0
-        ? Math.max(...chunksRef.current.map((c) => c.index)) + 1
-        : 0;
+    let nextIdx = chunks.length;
     const newlyUploaded: AudioChunkItem[] = [];
 
     for (let i = 0; i < fileList.length; i++) {
@@ -823,10 +794,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             durationSec: estimatedSec,
             timestampLabel: `${file.name} (${p + 1}/${totalParts})`,
             status: 'ready',
-            source: 'upload',
             screenFrames: [...capturedFramesRef.current],
           };
-          await saveAudioChunkToVault(chunkObj);
+          saveAudioChunkToVault(chunkObj);
           onAddChunk(chunkObj);
           newlyUploaded.push(chunkObj);
           nextIdx += 1;
@@ -842,10 +812,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           durationSec: estimatedSec,
           timestampLabel: file.name,
           status: 'ready',
-          source: 'upload',
           screenFrames: [...capturedFramesRef.current],
         };
-        await saveAudioChunkToVault(chunkObj);
+        saveAudioChunkToVault(chunkObj);
         onAddChunk(chunkObj);
         newlyUploaded.push(chunkObj);
         nextIdx += 1;
@@ -854,37 +823,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
     if (newlyUploaded.length > 0) {
       setTimeout(() => {
-        onProcessWithAI([...chunksRef.current]);
-      }, 250);
+        onProcessWithAI([...chunks, ...newlyUploaded]);
+      }, 200);
     }
   };
 
-  const handleDownloadChunk = (chunk: AudioChunkItem) => {
-    const ext = chunk.mimeType.includes('mp4')
-      ? 'm4a'
-      : chunk.mimeType.includes('ogg')
-      ? 'ogg'
-      : chunk.mimeType.includes('mpeg')
-      ? 'mp3'
-      : chunk.mimeType.includes('wav')
-      ? 'wav'
-      : 'webm';
-    const url = URL.createObjectURL(chunk.blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `AEGIS_Chunk_${chunk.index + 1}.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  };
-
-  const secondsUntilNextRotation = isRecording
-    ? Math.max(0, 300 - (elapsedSeconds - chunkStartElapsedRef.current))
-    : 300;
-
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {/* Section Header: ANALYZER & CONTROLS + Dual-Stream Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-1 px-0.5">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -905,16 +850,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               BG KEEP-ALIVE
             </span>
           )}
-          {backgroundProcessingCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-200 border border-purple-400/50">
-              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-              ANALISA PARALEL ({backgroundProcessingCount})
-            </span>
-          )}
           {vaultSavedCount > 0 && (
             <span
               className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40"
-              title="Tersimpan permanen di IndexedDB (aegis_audio_vault) sampai dihapus user"
+              title="Tersimpan aman di IndexedDB (aegis_audio_vault)"
             >
               <Database className="w-2.5 h-2.5" />
               VAULT ({vaultSavedCount})
@@ -974,10 +913,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           type="file"
           accept=".mp3,.wav,.webm,.m4a,.ogg,audio/*"
           multiple
-          onChange={(e) => {
-            handleFileUpload(e.target.files);
-            e.target.value = '';
-          }}
+          onChange={(e) => handleFileUpload(e.target.files)}
           className="hidden"
         />
 
@@ -996,19 +932,18 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               }`}
             />
             <span>
-              {isProcessingAI && !isRecording
-                ? processingStatusText || 'MEMPROSES KORELASI & RESUME...'
+              {isProcessingAI
+                ? processingStatusText || 'MEMPROSES SINTESIS AI...'
                 : isRecording
                 ? isPaused
                   ? 'PAUSED RECORDING'
-                  : 'LIVE RECORDING (AUTO-CHUNK 5 MENIT)'
-                : 'SIAP REKAM (CHUNK PER 5 MENIT)'}
+                  : 'LIVE RECORDING (BG PERSISTENT)'
+                : 'LIVE RECORDING'}
             </span>
           </div>
 
           <div className="text-[11px] sm:text-xs font-mono tabular-nums text-slate-200">
-            {formatDurationHMS(elapsedSeconds)} (Chunk #{currentChunkNumber}
-            {isRecording ? ` • Rotasi 5m: ${formatDurationHMS(secondsUntilNextRotation)}` : ''})
+            {formatDurationHMS(elapsedSeconds)} (Chunk {currentChunkNumber})
           </div>
         </div>
 
@@ -1023,13 +958,13 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
           <button
             type="button"
-            disabled={isProcessingAI && !isRecording}
+            disabled={isProcessingAI}
             onClick={isRecording ? handleStopAndAutoProcess : handleStartRecording}
             className="group relative shrink-0 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-slate-900 border-2 border-red-500/80 p-1 shadow-[0_0_20px_rgba(239,68,68,0.35)] active:scale-95 transition-transform cursor-pointer disabled:opacity-50 flex items-center justify-center"
             title={
               isRecording
-                ? 'Hentikan Rekaman, Gabungkan Semua Chunk + Gambar & Buat Resume Detil'
-                : 'Mulai Rekam Rapat (Chunk 5 Menit + Analisa Paralel + Vault Permanen)'
+                ? 'Hentikan & Sintesis Laporan Otomatis'
+                : 'Mulai Rekam Rapat (WakeLock + Background Keep-Alive + IndexedDB Vault)'
             }
           >
             <span
@@ -1037,7 +972,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 isRecording ? 'scale-90' : 'group-hover:brightness-110'
               }`}
             >
-              {isProcessingAI && !isRecording ? (
+              {isProcessingAI ? (
                 <Loader2 className="w-5 h-5 text-white animate-spin" />
               ) : isRecording ? (
                 <Square className="w-4 h-4 text-white fill-current" />
@@ -1057,7 +992,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
         <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1">
           <button
             type="button"
-            disabled={isProcessingAI && !isRecording}
+            disabled={isProcessingAI}
             onClick={isRecording ? handlePauseResume : handleStartRecording}
             className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-3.5 py-1 rounded-md bg-[#1E293B] hover:bg-slate-700 border border-slate-600/80 text-[11px] font-bold tracking-wider text-slate-100 shadow-inner transition-colors cursor-pointer disabled:opacity-50"
           >
@@ -1076,7 +1011,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             ) : (
               <>
                 <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
-                <span>MULAI REKAM</span>
+                <span>JEDA / REKAM</span>
               </>
             )}
           </button>
@@ -1103,12 +1038,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
               {isProcessingAI ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>KORELASI &amp; RESUME...</span>
+                  <span>SINTESIS AI...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-3 h-3" />
-                  <span>GABUNG &amp; RESUME ({chunks.length} CHUNK)</span>
+                  <span>SINTESIS AI ({chunks.length} CHUNK)</span>
                 </>
               )}
             </button>
@@ -1118,11 +1053,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
             <button
               type="button"
               onClick={onClearChunks}
-              className="inline-flex items-center gap-1 min-h-[30px] px-2 py-1 rounded-md bg-slate-900 hover:bg-red-950/60 border border-slate-700 text-slate-400 hover:text-red-300 text-[10px] cursor-pointer"
-              title="Hapus semua chunk rekaman dari Vault"
+              className="inline-flex items-center justify-center min-h-[30px] px-2 py-1 rounded-md bg-slate-900 hover:bg-red-950/60 border border-slate-700 text-slate-400 hover:text-red-300 text-[10px] cursor-pointer"
+              title="Hapus rekaman audio"
             >
               <Trash2 className="w-3 h-3" />
-              <span>Hapus Semua</span>
             </button>
           )}
         </div>
@@ -1131,112 +1065,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({
           <div className="mt-2 flex items-start gap-1.5 bg-amber-950/60 border border-amber-700/70 rounded px-2 py-1 text-[10px] text-amber-200">
             <AlertTriangle className="w-3 h-3 text-[#F59E0B] shrink-0 mt-0.5" />
             <span>{recorderError || recorderWarning}</span>
-          </div>
-        )}
-
-        {/* Saved 5-Minute Chunks Vault Inspector (Persisted until user deletes) */}
-        {chunks.length > 0 && (
-          <div className="mt-2.5 pt-2 border-t border-slate-800/90 space-y-1.5">
-            <button
-              type="button"
-              onClick={() => setShowChunkList((p) => !p)}
-              className="w-full flex items-center justify-between text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer"
-            >
-              <span className="inline-flex items-center gap-1.5 font-bold text-[#38BDF8]">
-                <Database className="w-3 h-3 text-[#F59E0B]" />
-                BRANKAS CHUNK REKAMAN (5 MENIT) — DISIMPAN SAMPAI DIHAPUS ({chunks.length})
-              </span>
-              {showChunkList ? (
-                <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              )}
-            </button>
-
-            {showChunkList && (
-              <div className="max-h-36 overflow-y-auto space-y-1 pr-0.5">
-                {chunks.map((chunk) => (
-                  <div
-                    key={chunk.id}
-                    className="bg-[#0B1120] border border-slate-800 rounded-lg px-2 py-1.5 flex items-center justify-between gap-2 text-[10px]"
-                  >
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-mono font-bold text-slate-100">
-                          Chunk #{chunk.index + 1}
-                        </span>
-                        <span className="font-mono text-slate-400">
-                          {chunk.timestampLabel}
-                        </span>
-                        <span className="font-mono text-slate-500">
-                          ({formatDurationHMS(chunk.durationSec)} • {formatBytes(chunk.sizeBytes)})
-                        </span>
-                        {chunk.status === 'processing' && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sky-500/20 text-[#38BDF8] font-mono text-[9px]">
-                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                            Analisa...
-                          </span>
-                        )}
-                        {chunk.status === 'done' && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[9px]">
-                            <CheckCircle2 className="w-2.5 h-2.5" />
-                            Tersimpan &amp; Dianalisa
-                          </span>
-                        )}
-                        {chunk.status === 'ready' && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[9px]">
-                            Menunggu Analisa
-                          </span>
-                        )}
-                        {chunk.status === 'error' && (
-                          <span
-                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 font-mono text-[9px]"
-                            title={chunk.errorMessage || 'Gagal dianalisa'}
-                          >
-                            Gagal
-                          </span>
-                        )}
-                      </div>
-                      {chunk.transcript && (
-                        <p className="text-[10px] text-slate-400 truncate">
-                          {chunk.transcript}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      {(chunk.status === 'error' || chunk.status === 'ready') && (
-                        <button
-                          type="button"
-                          onClick={() => onRetryChunkAnalysis(chunk.id)}
-                          className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-[#38BDF8] border border-slate-700 cursor-pointer"
-                          title="Analisa ulang chunk ini dengan Gemini"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadChunk(chunk)}
-                        className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 cursor-pointer"
-                        title="Unduh file audio chunk ini"
-                      >
-                        <Download className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={chunk.status === 'processing'}
-                        onClick={() => onRemoveChunk(chunk.id)}
-                        className="p-1 rounded bg-slate-800 hover:bg-red-950/80 text-slate-400 hover:text-red-300 border border-slate-700 cursor-pointer disabled:opacity-40"
-                        title="Hapus chunk ini dari Vault"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>

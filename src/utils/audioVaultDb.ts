@@ -1,17 +1,9 @@
-import type {
-  AudioChunkItem,
-  CapturedPhotoItem,
-  MeetingMetadata,
-  MeetingReportResult,
-} from '../types';
+import type { AudioChunkItem, CapturedPhotoItem, MeetingMetadata, MeetingReportResult } from '../types';
 
 const DB_NAME = 'aegis_audio_vault';
-const DB_VERSION = 2;
+const DB_VERSION = 1;
 const CHUNKS_STORE = 'audio_chunks';
-const PHOTOS_STORE = 'captured_photos';
-const SESSION_STATE_STORE = 'session_state';
 const ARCHIVES_STORE = 'session_archives';
-const ACTIVE_SESSION_KEY = 'active_session';
 
 export interface ArchivedSessionRecord {
   id: string;
@@ -21,16 +13,6 @@ export interface ArchivedSessionRecord {
   fullReportText: string;
   chunkCount: number;
   attachmentCount: number;
-}
-
-export interface PersistedActiveSessionState {
-  key: string;
-  metadata: MeetingMetadata;
-  report: MeetingReportResult;
-  customFullText: string | null;
-  isManualEditLocked: boolean;
-  screenFrames: string[];
-  updatedAt: number;
 }
 
 function openVaultDb(): Promise<IDBDatabase> {
@@ -48,13 +30,6 @@ function openVaultDb(): Promise<IDBDatabase> {
         const store = db.createObjectStore(CHUNKS_STORE, { keyPath: 'id' });
         store.createIndex('index', 'index', { unique: false });
       }
-      if (!db.objectStoreNames.contains(PHOTOS_STORE)) {
-        const photoStore = db.createObjectStore(PHOTOS_STORE, { keyPath: 'id' });
-        photoStore.createIndex('savedAt', 'savedAt', { unique: false });
-      }
-      if (!db.objectStoreNames.contains(SESSION_STATE_STORE)) {
-        db.createObjectStore(SESSION_STATE_STORE, { keyPath: 'key' });
-      }
       if (!db.objectStoreNames.contains(ARCHIVES_STORE)) {
         db.createObjectStore(ARCHIVES_STORE, { keyPath: 'id' });
       }
@@ -66,8 +41,8 @@ function openVaultDb(): Promise<IDBDatabase> {
 }
 
 /**
- * Persists a completed 5-minute audio chunk (including its blob, transcript, summary, action items,
- * and analysis status) immediately into IndexedDB (`aegis_audio_vault`) until deleted by the user.
+ * Persists a completed audio chunk immediately into IndexedDB (`aegis_audio_vault`)
+ * so zero audio data is lost under OS memory pressure or app switching.
  */
 export async function saveAudioChunkToVault(chunk: AudioChunkItem): Promise<void> {
   try {
@@ -84,13 +59,7 @@ export async function saveAudioChunkToVault(chunk: AudioChunkItem): Promise<void
         durationSec: chunk.durationSec,
         timestampLabel: chunk.timestampLabel,
         status: chunk.status,
-        source: chunk.source,
         screenFrames: chunk.screenFrames || [],
-        transcript: chunk.transcript || '',
-        isiKegiatanSummary: chunk.isiKegiatanSummary || '',
-        extractedActionItems: chunk.extractedActionItems || [],
-        analyzedAt: chunk.analyzedAt || '',
-        errorMessage: chunk.errorMessage || '',
         savedAt: Date.now(),
       });
       tx.oncomplete = () => {
@@ -119,11 +88,7 @@ export async function loadAudioChunksFromVault(): Promise<AudioChunkItem[]> {
       const req = store.getAll();
       req.onsuccess = () => {
         db.close();
-        const items = ((req.result || []) as AudioChunkItem[]).map((item) => ({
-          ...item,
-          // Recover gracefully if page was closed while a chunk was mid-processing
-          status: item.status === 'processing' ? ('ready' as const) : item.status,
-        }));
+        const items = (req.result || []) as AudioChunkItem[];
         items.sort((a, b) => a.index - b.index);
         resolve(items);
       };
@@ -161,7 +126,7 @@ export async function removeAudioChunkFromVault(id: string): Promise<void> {
 }
 
 /**
- * Clears all audio chunks in `aegis_audio_vault` when user explicitly deletes/resets.
+ * Clears all audio chunks in `aegis_audio_vault` when resetting or exiting a session.
  */
 export async function clearAudioVaultChunks(): Promise<void> {
   try {
@@ -169,179 +134,6 @@ export async function clearAudioVaultChunks(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(CHUNKS_STORE, 'readwrite');
       tx.objectStore(CHUNKS_STORE).clear();
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onerror = () => {
-        db.close();
-        reject(tx.error);
-      };
-    });
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Persists a captured/uploaded photo item into IndexedDB until explicitly deleted by the user.
- */
-export async function saveCapturedPhotoToVault(
-  photo: CapturedPhotoItem,
-  orderIndex?: number
-): Promise<void> {
-  try {
-    const db = await openVaultDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(PHOTOS_STORE, 'readwrite');
-      tx.objectStore(PHOTOS_STORE).put({
-        ...photo,
-        savedAt: orderIndex !== undefined ? orderIndex : Date.now(),
-      });
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onerror = () => {
-        db.close();
-        reject(tx.error);
-      };
-    });
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Loads all stored photos (camera + manual uploads) from IndexedDB.
- */
-export async function loadCapturedPhotosFromVault(): Promise<CapturedPhotoItem[]> {
-  try {
-    const db = await openVaultDb();
-    return await new Promise<CapturedPhotoItem[]>((resolve, reject) => {
-      const tx = db.transaction(PHOTOS_STORE, 'readonly');
-      const req = tx.objectStore(PHOTOS_STORE).getAll();
-      req.onsuccess = () => {
-        db.close();
-        const rows = (req.result || []) as Array<CapturedPhotoItem & { savedAt?: number }>;
-        rows.sort((a, b) => (a.savedAt || 0) - (b.savedAt || 0));
-        resolve(
-          rows.map((row) => ({
-            ...row,
-            status: row.status === 'analyzing' ? ('done' as const) : row.status,
-          }))
-        );
-      };
-      req.onerror = () => {
-        db.close();
-        reject(req.error);
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
-export async function removeCapturedPhotoFromVault(id: string): Promise<void> {
-  try {
-    const db = await openVaultDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(PHOTOS_STORE, 'readwrite');
-      tx.objectStore(PHOTOS_STORE).delete(id);
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onerror = () => {
-        db.close();
-        reject(tx.error);
-      };
-    });
-  } catch {
-    // ignore
-  }
-}
-
-export async function clearCapturedPhotosVault(): Promise<void> {
-  try {
-    const db = await openVaultDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(PHOTOS_STORE, 'readwrite');
-      tx.objectStore(PHOTOS_STORE).clear();
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onerror = () => {
-        db.close();
-        reject(tx.error);
-      };
-    });
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Persists active meeting metadata, report, detailed resume, and edit locks until deleted by the user.
- */
-export async function saveActiveSessionStateToVault(
-  state: Omit<PersistedActiveSessionState, 'key' | 'updatedAt'>
-): Promise<void> {
-  try {
-    const db = await openVaultDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(SESSION_STATE_STORE, 'readwrite');
-      tx.objectStore(SESSION_STATE_STORE).put({
-        ...state,
-        key: ACTIVE_SESSION_KEY,
-        updatedAt: Date.now(),
-      });
-      tx.oncomplete = () => {
-        db.close();
-        resolve();
-      };
-      tx.onerror = () => {
-        db.close();
-        reject(tx.error);
-      };
-    });
-  } catch {
-    // ignore
-  }
-}
-
-export async function loadActiveSessionStateFromVault(): Promise<PersistedActiveSessionState | null> {
-  try {
-    const db = await openVaultDb();
-    return await new Promise<PersistedActiveSessionState | null>((resolve, reject) => {
-      const tx = db.transaction(SESSION_STATE_STORE, 'readonly');
-      const req = tx.objectStore(SESSION_STATE_STORE).get(ACTIVE_SESSION_KEY);
-      req.onsuccess = () => {
-        db.close();
-        resolve((req.result as PersistedActiveSessionState) || null);
-      };
-      req.onerror = () => {
-        db.close();
-        reject(req.error);
-      };
-    });
-  } catch {
-    return null;
-  }
-}
-
-export async function clearAllActiveSessionVault(): Promise<void> {
-  try {
-    const db = await openVaultDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(
-        [CHUNKS_STORE, PHOTOS_STORE, SESSION_STATE_STORE],
-        'readwrite'
-      );
-      tx.objectStore(CHUNKS_STORE).clear();
-      tx.objectStore(PHOTOS_STORE).clear();
-      tx.objectStore(SESSION_STATE_STORE).clear();
       tx.oncomplete = () => {
         db.close();
         resolve();

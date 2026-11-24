@@ -55,7 +55,7 @@ export async function stripExifAndNormalizeImage(sourceDataUrl: string): Promise
       }
 
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-      resolve(canvas.toDataURL('image/jpeg', 0.75));
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(sourceDataUrl);
     img.src = sourceDataUrl;
@@ -170,7 +170,7 @@ export async function burnTacticalBannerWatermark(
         targetW - 40
       );
 
-      resolve(canvas.toDataURL('image/jpeg', 0.75));
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
     };
     img.onerror = () => resolve(cleanSourceDataUrl);
     img.src = cleanSourceDataUrl;
