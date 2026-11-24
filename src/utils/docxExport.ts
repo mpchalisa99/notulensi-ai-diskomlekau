@@ -57,7 +57,9 @@ export async function exportReportToDocx(
   metadata: MeetingMetadata,
   executiveSummary?: string,
   actionItems?: ActionItem[],
-  attachmentPhotos?: CapturedPhotoItem[]
+  attachmentPhotos?: CapturedPhotoItem[],
+  correlationAnalysis?: string,
+  detailedResume?: string
 ): Promise<void> {
   const lines = fullReportText.split(/\r?\n/);
 
@@ -112,6 +114,74 @@ export async function exportReportToDocx(
           }),
         ],
       })
+    );
+  }
+
+  if (correlationAnalysis && correlationAnalysis.trim().length > 0) {
+    extraChildren.push(
+      new Paragraph({
+        spacing: { before: 240, after: 120 },
+        heading: HeadingLevel.HEADING_3,
+        children: [
+          new TextRun({
+            text: 'ANALISIS KORELASI AUDIO & VISUAL (KAMERA / UPLOAD)',
+            font: 'Arial',
+            size: 22,
+            bold: true,
+          }),
+        ],
+      }),
+      ...correlationAnalysis
+        .trim()
+        .split(/\r?\n/)
+        .filter((l) => l.trim().length > 0)
+        .map(
+          (line) =>
+            new Paragraph({
+              spacing: { after: 120, line: 276 },
+              children: [
+                new TextRun({
+                  text: line.trim(),
+                  font: 'Arial',
+                  size: 22,
+                }),
+              ],
+            })
+        )
+    );
+  }
+
+  if (detailedResume && detailedResume.trim().length > 0) {
+    extraChildren.push(
+      new Paragraph({
+        spacing: { before: 240, after: 120 },
+        heading: HeadingLevel.HEADING_3,
+        children: [
+          new TextRun({
+            text: 'RESUME DETIL PELAKSANAAN RAPAT',
+            font: 'Arial',
+            size: 22,
+            bold: true,
+          }),
+        ],
+      }),
+      ...detailedResume
+        .trim()
+        .split(/\r?\n/)
+        .filter((l) => l.trim().length > 0)
+        .map(
+          (line) =>
+            new Paragraph({
+              spacing: { after: 120, line: 276 },
+              children: [
+                new TextRun({
+                  text: line.trim(),
+                  font: 'Arial',
+                  size: 22,
+                }),
+              ],
+            })
+        )
     );
   }
 
