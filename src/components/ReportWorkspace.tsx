@@ -7,7 +7,10 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
+  QrCode,
+  X,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import type {
   MeetingMetadata,
   MeetingReportResult,
@@ -38,6 +41,7 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
   const [copiedWA, setCopiedWA] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
 
   const autoRenderedReportText = buildOfficialReportText(metadata, report.isiKegiatan);
   const displayedFullReportText =
@@ -264,6 +268,65 @@ export const ReportWorkspace: React.FC<ReportWorkspaceProps> = ({
           </span>
         </button>
       </div>
+
+      {/* QR Code Share Button */}
+      <button
+        type="button"
+        onClick={() => setShowQrModal(true)}
+        className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-slate-100 bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition-all cursor-pointer shadow-sm border border-slate-700/60"
+      >
+        <QrCode className="w-4 h-4 text-sky-400" />
+        <span>QR Code Bagikan Laporan Rapat (Mobile Share)</span>
+      </button>
+
+      {/* QR Code Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl relative">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-sky-400" />
+                <h3 className="text-sm font-bold text-slate-100">QR Code Bagikan Notulensi</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-400 text-center">
+              Pindai QR Code di bawah menggunakan kamera ponsel atau perangkat seluler untuk membuka laporan rapat DISKOMLEKAU secara instan.
+            </div>
+
+            <div className="bg-white p-4 rounded-xl flex items-center justify-center shadow-inner">
+              <QRCodeSVG
+                value={window.location.href}
+                size={220}
+                level="M"
+                includeMargin={true}
+              />
+            </div>
+
+            <div className="text-[11px] text-slate-500 text-center truncate bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+              {window.location.href}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+                alert('Tautan laporan rapat berhasil disalin ke clipboard!');
+              }}
+              className="w-full py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+            >
+              Salin Tautan Rapat
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Dokumentasi Terlampir (From Zoom Screen Capture) */}
       {screenFrames.length > 0 && (

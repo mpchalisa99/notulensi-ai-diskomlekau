@@ -150,14 +150,32 @@ export default function App() {
   const [copiedWA, setCopiedWA] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
 
+  const getGeminiKey = () => {
+    return (
+      localStorage.getItem('aegis_custom_gemini_key') ||
+      import.meta.env.VITE_GEMINI_API_KEY ||
+      (typeof process !== 'undefined' && (process as any).env ? ((process as any).env.GEMINI_API_KEY || (process as any).env.API_KEY || (process as any).env.VITE_GEMINI_API_KEY) : '') ||
+      ''
+    ).trim();
+  };
+
+  const getGroqKey = () => {
+    return (
+      localStorage.getItem('aegis_groq_api_key') ||
+      import.meta.env.VITE_GROQ_API_KEY ||
+      (typeof process !== 'undefined' && (process as any).env ? ((process as any).env.GROQ_API_KEY || (process as any).env.VITE_GROQ_API_KEY) : '') ||
+      ''
+    ).trim();
+  };
+
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [groqApiKeySetting, setGroqApiKeySetting] = useState(() => localStorage.getItem('aegis_groq_api_key') || '');
-  const [customGeminiApiKeySetting, setCustomGeminiApiKeySetting] = useState(() => localStorage.getItem('aegis_custom_gemini_key') || '');
+  const [groqApiKeySetting, setGroqApiKeySetting] = useState(getGroqKey);
+  const [customGeminiApiKeySetting, setCustomGeminiApiKeySetting] = useState(getGeminiKey);
   const [aiModeSetting, setAiModeSetting] = useState<'auto' | 'groq'>(() => (localStorage.getItem('aegis_ai_mode') as any) || 'auto');
 
   const getStoredApiSettings = () => ({
-    customGeminiApiKey: localStorage.getItem('aegis_custom_gemini_key') || '',
-    groqApiKey: localStorage.getItem('aegis_groq_api_key') || '',
+    customGeminiApiKey: getGeminiKey(),
+    groqApiKey: getGroqKey(),
     aiMode: localStorage.getItem('aegis_ai_mode') || 'auto',
   });
 
@@ -875,6 +893,10 @@ export default function App() {
               : screenFramesRef.current.slice(-3)),
           ].slice(0, 4);
 
+          const currentSessionTranscribeKnowledge = chunksRef.current
+            .filter((c) => c.status === 'done' && c.transcript)
+            .map((c) => c.transcript);
+
           const response = await fetch('/api/summarize', {
             method: 'POST',
             headers: {
@@ -888,6 +910,7 @@ export default function App() {
               screenFrames: framesToSend,
               paparanKnowledge: currentSessionPaparanKnowledge,
               ocrKnowledge: currentSessionOcrKnowledge,
+              transcribeKnowledge: currentSessionTranscribeKnowledge,
               metadata: currentMeta,
               chunkIndex: chunk.index,
               totalChunks: Math.max(totalChunksCount, chunk.index + 1),

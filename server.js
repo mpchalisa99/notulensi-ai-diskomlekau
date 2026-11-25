@@ -29,8 +29,39 @@ var import_url = require("url");
 
 // api/summarize.ts
 var import_genai = require("@google/genai");
+var import_meta = {};
+function resolveGeminiApiKey(customKey) {
+  const k1 = customKey?.trim();
+  if (k1) return k1;
+  if (typeof window !== "undefined") {
+    const k2 = localStorage.getItem("aegis_custom_gemini_key")?.trim();
+    if (k2) return k2;
+  }
+  const k3 = (typeof import_meta !== "undefined" && import_meta.env?.VITE_GEMINI_API_KEY)?.trim();
+  if (k3) return k3;
+  if (typeof process !== "undefined" && process.env) {
+    const k4 = (process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.VITE_GEMINI_API_KEY)?.trim();
+    if (k4) return k4;
+  }
+  return "";
+}
+function resolveGroqApiKey(passedKey) {
+  const k1 = passedKey?.trim();
+  if (k1) return k1;
+  if (typeof window !== "undefined") {
+    const k2 = localStorage.getItem("aegis_groq_api_key")?.trim();
+    if (k2) return k2;
+  }
+  const k3 = (typeof import_meta !== "undefined" && import_meta.env?.VITE_GROQ_API_KEY)?.trim();
+  if (k3) return k3;
+  if (typeof process !== "undefined" && process.env) {
+    const k4 = (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY)?.trim();
+    if (k4) return k4;
+  }
+  return "";
+}
 function getGeminiClient(customKey) {
-  const apiKey = customKey && customKey.trim() ? customKey.trim() : process.env.GEMINI_API_KEY;
+  const apiKey = resolveGeminiApiKey(customKey);
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
     throw new Error(
       "GEMINI_API_KEY belum dikonfigurasi. Silakan masukkan kunci API Anda di Settings atau periksa Environment Variables."
@@ -311,6 +342,7 @@ async function handler(req, res) {
       overrideCategory,
       paparanKnowledge = [],
       ocrKnowledge = [],
+      transcribeKnowledge = [],
       unifiedContext,
       metadata,
       chunkIndex = 0,
@@ -322,7 +354,8 @@ async function handler(req, res) {
       aiMode = "auto"
     } = req.body || {};
     const glossaryHint = metadata?.customGlossary?.trim() ? metadata.customGlossary.trim() : "Kadiskomlekau, Sesdiskomlekau, Diskomlekau, Subdisrudal, Kasubdis, Kasatkomlek, Kabag, Kemhan, Mabesau, TNI AU, Vicon";
-    const useGroq = aiMode === "groq" && Boolean(groqApiKey && groqApiKey.trim());
+    const resolvedGroqKey = resolveGroqApiKey(groqApiKey);
+    const useGroq = aiMode === "groq" && Boolean(resolvedGroqKey);
     let failoverTriggered = false;
     let failoverStatus;
     const executeGemini = async (contents, schema) => {
@@ -330,10 +363,10 @@ async function handler(req, res) {
       return await callGeminiWithSchemaFallback(ai, contents, SYSTEM_INSTRUCTION, schema);
     };
     const executeGroq = async () => {
-      if (!groqApiKey || !groqApiKey.trim()) {
+      const key = resolveGroqApiKey(groqApiKey);
+      if (!key) {
         throw new Error("Gemini gagal dan Groq API Key belum dikonfigurasi di Settings.");
       }
-      const key = groqApiKey.trim();
       if (mode === "autonomous_vision") {
         const prompt = `Klasifikasikan otomatis foto ini menjadi "OCR_UNDANGAN", "MATERI_PAPARAN", atau "DOKUMENTASI_KEGIATAN" (${overrideCategory ? `Wajib: ${overrideCategory}` : "Otomatis"}). Ekstrak substansi strategis dan spesifikasi teknis dengan penalaran analitis Perwira Staf TNI AU. Glossary: ${glossaryHint}`;
         const rawJsonStr2 = await callGroqVision(imageDataUrl || "", prompt, key);
@@ -363,17 +396,19 @@ async function handler(req, res) {
 1. DATA STREAM AUDIO: ${JSON.stringify(unifiedContext.audioStreamData || [])}
 2. DATA PINDAIAN UNDANGAN (OCR_UNDANGAN): ${JSON.stringify(unifiedContext.ocrUndanganData || [])}
 3. DATA PINDAIAN SLIDE / MATERI PAPARAN (MATERI_PAPARAN): ${JSON.stringify(unifiedContext.materiPaparanData || [])}
-4. DATA DOKUMENTASI KEGIATAN: ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {})}
-5. METADATA SAAT INI: ${JSON.stringify(unifiedContext.currentMetadata || metadata || {})}
+4. HASIL TRANSKRIP AUDIO: ${JSON.stringify(transcribeKnowledge)}
+5. DATA DOKUMENTASI KEGIATAN: ${JSON.stringify(unifiedContext.dokumentasiKegiatanData || {})}
+6. METADATA SAAT INI: ${JSON.stringify(unifiedContext.currentMetadata || metadata || {})}
 Glossary: ${glossaryHint}`;
       } else if (mode === "synthesize" && Array.isArray(previousSummaries) && previousSummaries.length > 0) {
-        chatPrompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan dan undangan menjadi satu Laporan Notulensi utuh:
+        chatPrompt = `Gabungkan hasil ekstraksi ${previousSummaries.length} bagian rekaman sesi ini beserta materi slide paparan, undangan, dan transkrip audio menjadi satu Laporan Notulensi utuh:
 
 ${JSON.stringify(previousSummaries)}`;
       } else {
         chatPrompt = `Transkrip Audio (Whisper): "${transcriptionText}"
 Konteks Pindaian Undangan: ${JSON.stringify(ocrKnowledge)}
 Konteks Materi Paparan: ${JSON.stringify(paparanKnowledge)}
+Konteks Hasil Transkrip Audio: ${JSON.stringify(transcribeKnowledge)}
 Susun Laporan Pelaksanaan Kegiatan resmi DISKOMLEKAU lengkap dengan isiKegiatan (poin bernomor tematis dengan baris kosong ganda \\n\\n), executiveSummary, actionItems, dan cleanTranscript. Glossary: ${glossaryHint}`;
       }
       const rawJsonStr = await callGroqChat(chatPrompt, SYSTEM_INSTRUCTION, key);
@@ -446,12 +481,15 @@ ${paparanKnowledge.join("\n")}` : "";
           const ocrContextStr = Array.isArray(ocrKnowledge) && ocrKnowledge.length > 0 ? `
 Konteks Pindaian Undangan:
 ${ocrKnowledge.join("\n")}` : "";
+          const transcribeContextStr = Array.isArray(transcribeKnowledge) && transcribeKnowledge.length > 0 ? `
+Konteks Hasil Transkrip Audio:
+${transcribeKnowledge.join("\n")}` : "";
           const currentTitleHint = metadata?.judulKegiatan?.trim() ? `
 Judul Kegiatan: ${metadata.judulKegiatan.trim()}` : "";
           parts.push({
             text: `Transkripsikan, saring basa-basi lisan, terjemahkan istilah asing ke bahasa dinas TNI AU, dan terapkan Penalaran Analitis Mendalam Perwira Staf TNI AU.${currentTitleHint}
 Bagian Rekaman: ${chunkIndex + 1} dari ${totalChunks}.
-Glossary: ${glossaryHint}.${ocrContextStr}${slideContextStr}
+Glossary: ${glossaryHint}.${ocrContextStr}${slideContextStr}${transcribeContextStr}
 Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per poin) dengan pemisah baris kosong eksplisit (\\n\\n) di antara setiap poin.`
           });
           geminiContents = { parts };
@@ -475,7 +513,7 @@ Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per po
           failoverTriggered: false
         };
       } catch (geminiErr) {
-        if (groqApiKey && groqApiKey.trim()) {
+        if (resolveGroqApiKey(groqApiKey)) {
           failoverTriggered = true;
           failoverStatus = "Server Gemini sedang padat. Mengalihkan otomatis ke Groq...";
           const groqRes = await executeGroq();
@@ -498,8 +536,8 @@ Susun \`isiKegiatan\` dalam poin-poin bernomor tematis (3-5 kalimat rinci per po
 }
 
 // server.ts
-var import_meta = {};
-var __filename = (0, import_url.fileURLToPath)(import_meta.url);
+var import_meta2 = {};
+var __filename = (0, import_url.fileURLToPath)(import_meta2.url);
 var __dirname = import_path.default.dirname(__filename);
 var app = (0, import_express.default)();
 var PORT = Number(process.env.PORT) || 3e3;
